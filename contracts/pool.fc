@@ -1,0 +1,53 @@
+#pragma version >=0.4.0;
+
+#include "common/common.fc";
+#include "pool/pool.fc";
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    throw_if(error::empty_not_allowed, in_msg_body.slice_empty?());
+
+    ctx::init(my_balance, msg_value, in_msg_full, in_msg_body);
+
+    if ctx.at(IS_BOUNCED) { 
+        ;; mint should never
+        return ();
+    }
+
+    throw_unless(error::wrong_workchain, ctx.at(SENDER).address::check_workchain(params::workchain));
+    storage::load();
+
+    throw_if(error::invalid_token, equal_slices(storage::token0_address, storage::token1_address));
+
+    ;; handle collect_fees
+    if equal_slices(ctx.at(SENDER), storage::protocol_fee_address) {
+        handle_protocolfee_messages();
+        return ();
+    }
+
+    ;; handle swap, provide_lp and governance messages
+    if equal_slices(ctx.at(SENDER), storage::router_address) {
+        handle_router_messages();
+        return ();
+    }
+
+    if handle_lp_wallet_messages() {
+        return ();
+    }
+
+    if handle_lp_account_messages() {
+        return ();
+    }
+
+    <%
+    if (renderSetterCalls) {
+        print(`if equal_slices(ctx.at(SENDER), storage::rate_setter_address) { if handle_setter_messages() { return (); } }`);
+    }
+    %>
+
+    ;; make sure that the message has a valid opcode
+    if handle_getter_messages() {
+        return (); 
+    }
+
+    throw(error::wrong_op);
+}

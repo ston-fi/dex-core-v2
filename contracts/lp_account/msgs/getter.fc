@@ -1,0 +1,23 @@
+;; handle onchain 'get' calls
+
+(int) handle_getter_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if (ctx.at(OPCODE) == op::getter_lp_account_data) { 
+        reserves::max_balance(storage_fee::lp_account);
+        msgs::send_simple(
+            0, 
+            ctx.at(SENDER), 
+            anyone::getter_lp_account_data(
+                storage::user_address, 
+                storage::pool_address, 
+                storage::amount0, 
+                storage::amount1
+            ),
+            CARRY_ALL_BALANCE | IGNORE_ERRORS
+        );
+        return (true);
+    }
+
+    return (false); ;; wrong op
+}

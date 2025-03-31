@@ -1,0 +1,100 @@
+(int) handle_lp_wallet_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::burn_notification_ext { 
+        ;; Sent by LP wallet after burning LP jettons to release liquidity
+        int jetton_amount = in_msg_body~load_coins();
+        slice from_address = in_msg_body~load_msg_addr();
+        slice response_address = in_msg_body~load_msg_addr();
+        cell maybe_custom_payload = in_msg_body~load_maybe_ref();
+
+        var lp_wallet = contracts::from_sources(
+            lp_wallet_idata(
+                from_address, 
+                my_address(), 
+                storage::jetton_lp_wallet_code
+            ),
+            storage::jetton_lp_wallet_code
+        );
+
+        throw_unless(error::invalid_caller, equal_slices(lp_wallet~address(params::workchain), ctx.at(SENDER)));
+        throw_if(error::invalid_call, storage::is_locked); 
+        throw_unless(error::zero_output, jetton_amount > 0); 
+        throw_unless(error::wrong_address, response_address.preload_uint(2) == 0); 
+
+        (int amount0_out, int amount1_out) = pool::get_lp_burn_out(jetton_amount);
+
+        ;; both must be positive
+        throw_unless(error::zero_output, (amount0_out > 0) & (amount1_out > 0));
+
+        storage::reserve0 -= amount0_out;
+        storage::reserve1 -= amount1_out;
+        storage::total_supply_lp -= jetton_amount;
+
+        throw_unless(error::invalid_amount, (storage::reserve0 > 0) & (storage::reserve1 > 0));
+        throw_unless(error::invalid_amount, (storage::total_supply_lp > 0));
+
+        ;; -> LPWallet -> Pool -> Router -> JettonWalletA ->
+        ;;                     -> Router -> JettonWalletB ->
+        throw_unless(error::insufficient_gas, ctx.at(MSG_VALUE) > ((ctx.at(FWD_FEE) * 7)
+            + storage_fee::pool + gas::pool::burn_ext 
+            + storage_fee::router + gas::router::pay_to 
+            + gas::router::pay_to  ;; do not sum again storage_fee::router
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer 
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer));
+
+        cell left_maybe_payload = null();
+        cell right_maybe_payload = null();
+        ifnot maybe_custom_payload.null?() {
+            slice maybe_custom_payload_sc = maybe_custom_payload.begin_parse();
+            if maybe_custom_payload_sc.slice_bits() == 2 {
+                left_maybe_payload = maybe_custom_payload_sc~load_maybe_ref();
+                right_maybe_payload = maybe_custom_payload_sc~load_maybe_ref();
+            }
+        }
+
+        reserves::max_balance(storage_fee::pool);
+        
+        int gas = ((ctx.at(MSG_VALUE) - (ctx.at(FWD_FEE) + storage_fee::pool + gas::pool::burn_ext + storage_fee::router)) / 2) + storage_fee::router;
+        msgs::send_simple(
+            gas, 
+            storage::router_address, 
+            router::pay_to(
+                from_address, 
+                from_address, 
+                from_address, 
+                op::burn_ok, 
+                0, 
+                left_maybe_payload, 
+                amount0_out, 
+                storage::token0_address, 
+                0, 
+                storage::token1_address
+            ), 
+            NORMAL
+        );
+
+        msgs::send_simple(
+            0, 
+            storage::router_address, 
+            router::pay_to(
+                from_address, 
+                from_address, 
+                from_address, 
+                op::burn_ok, 
+                0, 
+                right_maybe_payload, 
+                0, 
+                storage::token0_address, 
+                amount1_out, 
+                storage::token1_address
+            ), 
+            CARRY_ALL_BALANCE ;; the above transfer fixed amount, in this transaction we can carry left gas
+        );
+
+        storage::save();
+        return (true);
+    }
+  
+    return (false);
+}

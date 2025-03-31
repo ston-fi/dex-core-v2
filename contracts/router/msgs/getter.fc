@@ -1,0 +1,32 @@
+;; onchain get methods
+
+(int) handle_getter_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+    
+    if ctx.at(OPCODE) == op::getter_pool_address { 
+
+        slice token0 = in_msg_body~load_msg_addr();
+        slice token1 = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+
+        throw_if(error::wrong_address, equal_slices(token0, token1)); 
+        throw_unless(error::wrong_workchain, token0.address::check_workchain(params::workchain));
+        throw_unless(error::wrong_workchain, token1.address::check_workchain(params::workchain));
+
+        var pool = contracts::from_sources(
+            pool_idata(my_address(), token0, token1, storage::jetton_lp_wallet_code,  storage::lp_account_code),
+            storage::pool_code
+        );
+
+        reserves::max_balance(storage_fee::router);
+        msgs::send_simple(
+            0, 
+            ctx.at(SENDER), 
+            anyone::getter_pool_address(pool~address(params::workchain)), 
+            CARRY_ALL_BALANCE | IGNORE_ERRORS
+        );
+        return (true);
+    }
+
+    return (false); ;; wrong op
+}

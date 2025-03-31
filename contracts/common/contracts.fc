@@ -1,0 +1,297 @@
+(cell) vault_idata(slice _user_address, slice _token_address, slice _router_address) inline {
+    return begin_cell()
+        .store_slice(_user_address)
+        .store_slice(_token_address)
+        .store_slice(_router_address)
+        .store_coins(0) 
+    .end_cell();
+}
+
+(cell) lp_account_idata(slice _pool_address, slice _user_address) inline {
+    return begin_cell()
+        .store_slice(_user_address)
+        .store_slice(_pool_address)
+        .store_coins(0) ;; left_balance
+        .store_coins(0) ;; right_balance
+    .end_cell();
+}
+
+(cell) lp_wallet_idata(slice _owner_address, slice _jetton_master_address, cell _jetton_wallet_code) inline {
+    return begin_cell()
+        .store_coins(0) ;; balance
+        .store_slice(_owner_address)
+        .store_slice(_jetton_master_address)
+        .store_ref(_jetton_wallet_code)
+    .end_cell();
+}
+
+;; messages
+(cell) pool::cb_refund_me(int _left_amount, int _right_amount, cell _left_maybe_payload, cell _right_maybe_payload) inline {
+    return begin_message(op::cb_refund_me)
+        .store_coins(_left_amount)
+        .store_coins(_right_amount)
+        .store_slice(ctx.at(SENDER)) ;; called only in LPAccount from owner, we can safely use sender_address
+        .store_maybe_ref(_left_maybe_payload)
+        .store_maybe_ref(_right_maybe_payload)
+    .end_cell();
+}
+
+(cell) pool::cb_add_liquidity(
+    slice _user_address, 
+    int _left_amount, 
+    int _right_amount, 
+    slice _to_user,
+    int _min_lp_out,
+    int _fwd_amount,
+    cell _custom_payload_cs,
+    slice _refund_address,
+    slice _excess_address
+) inline {
+    return begin_message(op::cb_add_liquidity)
+        .store_coins(_left_amount)
+        .store_coins(_right_amount)
+        .store_slice(_user_address)
+        .store_coins(_min_lp_out)
+        .store_coins(_fwd_amount)
+        .store_maybe_ref(_custom_payload_cs)
+        .store_ref(begin_cell()
+            .store_slice(_to_user)
+            .store_slice(_refund_address)
+            .store_slice(_excess_address)
+        .end_cell())
+    .end_cell();
+}
+
+;; onchain getters, marked by anyone
+(cell) anyone::getter_lp_account_data(slice _user_address, slice _pool_address, int _left_amount, int _right_amount) inline {
+    return begin_message(op::getter_lp_account_data)
+        .store_slice(_user_address)
+        .store_slice(_pool_address)
+        .store_coins(_left_amount)
+        .store_coins(_right_amount)
+    .end_cell();
+}
+
+(cell) anyone::getter_pool_data(
+    int _is_locked,
+    slice _router_address,
+    int _total_supply_lp,
+    int _left_reserve,
+    int _right_reserve,
+    slice _left_token_address,
+    slice _right_token_address,
+    int _lp_fee,
+    int _protocol_fee,
+    slice _protocol_fee_address,
+    int _collected_left_token_protocol_fees,
+    int _collected_right_token_protocol_fees
+) inline {
+    return begin_message(op::getter_pool_data)
+        .store_bool(_is_locked)
+        .store_coins(_left_reserve)
+        .store_coins(_right_reserve)
+        .store_slice(_left_token_address)
+        .store_slice(_right_token_address)
+        .store_ref(begin_cell()
+            .store_uint(_lp_fee, 16)
+            .store_uint(_protocol_fee, 16)
+            .store_slice(_router_address)
+            .store_slice(_protocol_fee_address)
+            .store_coins(_total_supply_lp)
+            .store_coins(_collected_left_token_protocol_fees)
+            .store_coins(_collected_right_token_protocol_fees)
+        .end_cell())
+    .end_cell();
+}
+
+(cell) anyone::getter_lp_account_address(slice _addr) inline {
+    return begin_message(op::getter_lp_account_address)
+        .store_slice(_addr)
+    .end_cell();
+}
+
+
+(cell) anyone::getter_pool_address(slice _addr) inline {
+    return begin_message(op::getter_pool_address)
+        .store_slice(_addr)
+    .end_cell();
+}
+
+(cell) lp_account::add_liquidity(
+    int _left_amount, 
+    int _right_amount, 
+    int _min_lp_out,
+    int _fwd_amount,
+    int _both_positive?,
+    slice _to_user,
+    cell _custom_payload_cs,
+    slice _refund_address,
+    slice _excess_address
+) inline {
+    return begin_message(op::add_liquidity)
+        .store_coins(_left_amount)
+        .store_coins(_right_amount)
+        .store_coins(_min_lp_out)
+        .store_coins(_fwd_amount)
+        .store_bool(_both_positive?)
+        .store_slice(_to_user)
+        .store_maybe_ref(_custom_payload_cs)
+        .store_ref(begin_cell()
+            .store_slice(_refund_address)
+            .store_slice(_excess_address)
+        .end_cell())
+    .end_cell();
+}
+
+(cell) router::pay_to(
+    slice _original_caller,
+    slice _to_address, 
+    slice _excesses_address,
+    int _exit_code, 
+    int _ton_fwd_amount, 
+    cell _maybe_custom_payload, 
+    int _amount0_out, 
+    slice _token0_address,
+    int _amount1_out,
+    slice _token1_address
+) inline {
+    return begin_message(op::pay_to)
+        .store_slice(_to_address)
+        .store_slice(_excesses_address)
+        .store_slice(_original_caller)
+        .store_uint(_exit_code, 32)
+        .store_maybe_ref(_maybe_custom_payload)
+        .store_ref(begin_cell()
+            .store_coins(_ton_fwd_amount)
+            .store_coins(_amount0_out)
+            .store_slice(_token0_address)
+            .store_coins(_amount1_out)
+            .store_slice(_token1_address)
+        .end_cell())
+    .end_cell();
+}
+
+(cell) router::vault_pay_to(
+    int _amount_out, 
+    slice _token_address,
+    slice _to_address
+) inline {
+    return begin_message(op::vault_pay_to)
+        .store_coins(_amount_out)
+        .store_slice(_token_address)
+        .store_slice(_to_address)
+    .end_cell();
+}
+
+(cell) router::pay_vault(
+    slice _to_address, 
+    slice _excesses_address,
+    int _amount0_out, 
+    slice _token0_address,
+    int _amount1_out,
+    slice _token1_address
+) inline {
+    return begin_message(op::pay_vault)
+        .store_slice(_to_address)
+        .store_slice(_excesses_address)
+        .store_ref(begin_cell()
+            .store_coins(_amount0_out)
+            .store_slice(_token0_address)
+            .store_coins(_amount1_out)
+            .store_slice(_token1_address)
+        .end_cell())
+    .end_cell();
+}
+
+(cell) jetton_wallet::mint(
+    slice _from, 
+    slice _response_address, 
+    int _amount,
+    int _fwd_amount,
+    cell _either_ref
+) inline {
+    return begin_message(op::internal_transfer)
+        .store_coins(_amount) ;; jetton_amount
+        .store_slice(_from) ;; from_address
+        .store_slice(_response_address) ;; response_address
+        .store_coins(_fwd_amount) ;; forward_ton_amount
+        .store_maybe_ref(_either_ref) ;; either_forward_payload
+    .end_cell();
+}
+
+(cell) pool::$route(
+    int _transferred_op, 
+    slice _from_user, 
+    int _jetton_amount, 
+    slice _sender_jetton_address, 
+    slice _other_jetton_address, 
+    cell _dex_payload
+) inline {
+    var _out_msg_body = begin_message(_transferred_op)
+        .store_slice(_from_user);
+
+    if _sender_jetton_address.slice_hash() > _other_jetton_address.slice_hash() {
+        _out_msg_body = _out_msg_body
+            .store_coins(_jetton_amount)
+            .store_coins(0);
+    } else {
+        _out_msg_body = _out_msg_body
+            .store_coins(0)
+            .store_coins(_jetton_amount);
+    }
+
+    return _out_msg_body
+        .store_ref(_dex_payload)
+        .end_cell();
+}
+
+(cell) pool::internal_set_fees(
+    int _new_lp_fee, 
+    int _new_protocol_fee, 
+    slice _new_protocol_fee_address,
+    slice _excesses_recipient
+) inline {
+    return begin_message(op::internal_set_fees)
+        .store_uint(_new_lp_fee, 16)
+        .store_uint(_new_protocol_fee, 16)
+        .store_slice(_new_protocol_fee_address)
+        .store_slice(_excesses_recipient)
+    .end_cell();
+}
+
+(cell) pool::internal_update_pool_code(cell _new_pool_code) inline {
+    return begin_message(op::internal_update_pool_code)
+        .store_ref(_new_pool_code)
+    .end_cell();
+}
+
+(cell) pool::reset_gas(slice _excesses_recipient) inline {
+    return begin_message(op::reset_gas)
+        .store_slice(_excesses_recipient)
+    .end_cell();
+}
+
+(cell) pool::internal_update_status(slice _excesses_recipient) inline {
+    return begin_message(op::internal_update_status)
+        .store_slice(_excesses_recipient)
+    .end_cell();
+}
+
+(builder) jetton_wallet::transfer(int _fwd_amount, int _jetton_amount, slice _to, slice _response_address) inline {
+    return begin_message(op::ft::transfer)
+        .store_coins(_jetton_amount)
+        .store_slice(_to) ;; to_owner_address
+        .store_slice(_response_address) ;; responseAddress
+        .store_uint(0, 1)
+        .store_coins(_fwd_amount); ;; forward_ton_amount
+}
+
+(cell) vault::deposit_ref_fee(
+    int _amount, 
+    slice _response_address
+) inline {
+    return begin_message(op::deposit_ref_fee)
+        .store_coins(_amount)
+        .store_slice(_response_address)
+    .end_cell();
+}

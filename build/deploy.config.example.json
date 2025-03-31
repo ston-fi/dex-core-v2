@@ -1,0 +1,11 @@
+{
+    "routerAddress": "",
+    "firstJettonMinter": "",
+    "secondJettonMinter": "",
+    "newLpFee": "100",
+    "newProtocolFee": "100",
+    "newRefFee": "100",
+    "protocolFeeAddress": "",
+    "adminAddress": "",
+    "dexType": "constant_product"
+}

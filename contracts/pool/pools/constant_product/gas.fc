@@ -1,0 +1,3 @@
+const gas::pool::cb_add_liquidity = 27000000;
+const gas::pool::swap = 21000000;
+const gas::pool::burn_ext = 21000000;

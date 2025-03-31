@@ -1,0 +1,82 @@
+(int, int, int) pool::get_swap_out(int _side, int _ref_value, int _amount_in, int _reserve_in, int _reserve_out) inline {
+    int protocol_fee_out = 0;
+    int ref_fee_out = 0;
+
+    int base_in_without_fee = muldiv(_amount_in, (params::fee_divider - storage::lp_fee), params::fee_divider);
+    int base_out = 0;
+
+    if _side {
+        base_out = solve_dy(_reserve_in, _reserve_out, base_in_without_fee);
+    } else {
+        base_out = solve_dx(_reserve_out, _reserve_in, base_in_without_fee);    
+    }
+
+    ;; pay other fees in out_token
+    if storage::protocol_fee > 0 {
+        protocol_fee_out = divc(base_out * storage::protocol_fee, params::fee_divider);
+    }
+
+    if _ref_value > 0 {
+        ref_fee_out = divc(base_out * _ref_value, params::fee_divider);
+    }
+
+    base_out -= protocol_fee_out + ref_fee_out;
+    return (base_out, protocol_fee_out, ref_fee_out);
+}
+
+(int) pool::get_lp_provide_init_out(int _left_amount, int _right_amount) impure inline {    
+    int ex = math::fp::from(_left_amount);
+    int ey = math::fp::from(_right_amount);
+    
+    ;; 1^120 * 1e18 * 1e18 fits
+    storage::rate = ex.math::fp::div(ey);
+
+    int inv0 = _invariant(
+        _left_amount, 
+        _right_amount, 
+        storage::w0, 
+        storage::w0.math::fp::complement()
+    );
+
+    return math::fp::to(inv0);
+}
+
+(int, int, int) pool::get_lp_provide_out(int _left_amount, int _right_amount) inline {
+    int _w0 = storage::w0;
+    int _w1 = storage::w0.math::fp::complement();
+    
+    int inv0 = _invariant(storage::reserve0, storage::reserve1, _w0, _w1);
+
+    int new_reserve0 = storage::reserve0 + _left_amount; 
+    int new_reserve1 = storage::reserve1 + _right_amount;
+
+    int inv1 = _invariant(new_reserve0, new_reserve1, _w0, _w1);
+    if inv1 <= inv0 { return (0, 0, 0); }
+
+    int ideal_balance0 = muldiv(storage::reserve0, inv1, inv0);
+    int diff0 = abs(new_reserve0 - ideal_balance0);
+    int protocol_fee0 = new_reserve0 > ideal_balance0 
+        ? muldiv(diff0, storage::protocol_fee, params::fee_divider) : 0;
+    int lp_fee0 = muldiv(diff0, divc(storage::lp_fee, 2), params::fee_divider);
+    new_reserve0 -= (lp_fee0 + protocol_fee0);
+    
+    int ideal_balance1 = muldiv(storage::reserve1, inv1, inv0);
+    int diff1 = abs(new_reserve1 - ideal_balance1);
+    int protocol_fee1 = new_reserve1 > ideal_balance1 
+        ? muldiv(diff1, storage::protocol_fee, params::fee_divider) : 0;
+    int lp_fee1 = muldiv(diff1, divc(storage::lp_fee, 2), params::fee_divider);
+    new_reserve1 -= (lp_fee1 + protocol_fee1);
+
+    int inv2 = _invariant(new_reserve0, new_reserve1, _w0, _w1);
+    if inv2 <= inv0 { return (0, 0, 0); }
+
+    return (muldiv((inv2 - inv0), storage::total_supply_lp, inv0), protocol_fee0, protocol_fee1);
+}
+
+(int, int) pool::get_lp_burn_out(int _lp_amount) inline {
+    ;; get shares
+    return (
+        muldiv(_lp_amount, storage::reserve0, storage::total_supply_lp),
+        muldiv(_lp_amount, storage::reserve1, storage::total_supply_lp)
+    );
+}

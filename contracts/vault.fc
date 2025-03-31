@@ -1,0 +1,85 @@
+#pragma version >=0.4.0;
+
+#include "common/common.fc";
+
+global slice storage::owner_address;
+global slice storage::token_address; 
+global slice storage::router_address; 
+global int storage::deposited_amount;
+
+() storage::load() impure inline {
+    slice ds = get_data().begin_parse();
+    storage::owner_address = ds~load_msg_addr();
+    storage::token_address = ds~load_msg_addr(); 
+    storage::router_address = ds~load_msg_addr(); 
+    storage::deposited_amount = ds~load_coins();
+    ds.end_parse();
+}
+
+() storage::save() impure inline_ref {
+    set_data(begin_cell()
+        .store_slice(storage::owner_address)
+        .store_slice(storage::token_address)
+        .store_slice(storage::router_address)
+        .store_coins(storage::deposited_amount)
+    .end_cell());
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    throw_if(error::empty_not_allowed, in_msg_body.slice_empty?());
+    
+    ctx::init(my_balance, msg_value, in_msg_full, in_msg_body);
+    if ctx.at(IS_BOUNCED) { 
+        return ();
+    }
+
+    throw_unless(error::wrong_workchain, ctx.at(SENDER).address::check_workchain(params::workchain));
+    storage::load();
+
+    ;; called by router
+    if (ctx.at(OPCODE) == op::deposit_ref_fee) & equal_slices(ctx.at(SENDER), storage::router_address) {
+        slice in_msg_body = ctx.at(BODY);
+        ;; assume deposited_amount will never exceed max coin limit
+        storage::deposited_amount += in_msg_body~load_coins();
+        storage::save();
+        reserves::max_balance(storage_fee::vault);
+        utils::send_excesses(0, in_msg_body~load_msg_addr(), QCARRY_ALL_BALANCE);
+        return ();
+    }
+
+    ;; called by anyone
+    if ctx.at(OPCODE) == op::withdraw_fee { 
+        throw_unless(error::zero_output, storage::deposited_amount > 0);
+
+        ;; use total balance for gas check because CARRY_ALL_BALANCE
+        throw_unless(error::insufficient_gas, ctx.at(BALANCE) > ctx.at(FWD_FEE) * 5
+            + gas::router::vault_pay_to + gas::vault::withdraw_fee
+            + storage_fee::router
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer);
+
+        msgs::send_simple(0, 
+            storage::router_address, 
+            router::vault_pay_to(
+                storage::deposited_amount, 
+                storage::token_address, 
+                storage::owner_address),
+            CARRY_ALL_BALANCE | DESTROY_IF_ZERO);
+            
+        storage::deposited_amount = 0;    
+        storage::save();
+        return ();
+    }
+    
+    throw(error::wrong_op);
+}
+
+
+_ get_vault_data() method_id {
+    storage::load();
+    return (
+        storage::owner_address,
+        storage::token_address,
+        storage::router_address,
+        storage::deposited_amount
+    );
+}

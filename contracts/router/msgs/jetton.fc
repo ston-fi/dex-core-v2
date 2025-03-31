@@ -1,0 +1,35 @@
+(int) handle_jetton_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    ;; handle notification from jetton wallet
+    if ctx.at(OPCODE) == op::ft::transfer_notification {
+        int jetton_amount = in_msg_body~load_coins();
+        slice from_address = in_msg_body~load_msg_addr();
+
+        if in_msg_body.slice_refs_empty?() {
+            ;; no ref, refund tx
+            reserves::max_balance(storage_fee::router);
+            msgs::send_simple(
+                0, 
+                ctx.at(SENDER), 
+                jetton_wallet::transfer(0, jetton_amount, from_address, from_address)
+                    .store_uint(0, 1) ;; store same cell
+                    .store_uint32(op::transfer_bounce_invalid_request)
+                    .end_cell(), 
+                QCARRY_ALL_BALANCE
+            );
+            return (true);
+        }
+
+        route_dex_messages(
+            ctx.at(SENDER), 
+            ctx.at(MSG_VALUE), 
+            jetton_amount, 
+            from_address, 
+            in_msg_body~load_ref()
+        );
+        return (true);
+    }
+
+    return (false);
+}

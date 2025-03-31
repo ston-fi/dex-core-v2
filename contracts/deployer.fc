@@ -1,0 +1,16 @@
+;; cheap way to deploy a library in masterchain
+#pragma version >=0.2.0;
+
+#include "../node_modules/@ston-fi/funcbox/contracts/stdlib.fc";
+
+() set_lib(cell code, int mode) impure asm "SETLIBCODE";
+cell empty_storage() asm "<b 0 1 u, b> PUSHREF";
+
+() recv_internal() impure {    
+    slice ds = get_data().begin_parse();
+    if ds~load_uint(1) {
+        set_lib(ds~load_ref(), 2);
+        set_data(empty_storage());
+    }
+    return ();
+}

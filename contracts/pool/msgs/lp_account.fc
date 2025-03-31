@@ -1,0 +1,202 @@
+(int) handle_lp_account_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::cb_add_liquidity {
+        ;; Sent by user's lp_account after adding liquidity
+        ;; not throwable
+        int tot_am0 = in_msg_body~load_coins();
+        int tot_am1 = in_msg_body~load_coins();
+        slice user_address = in_msg_body~load_msg_addr();
+        int min_lp_out = in_msg_body~load_coins();
+        int fwd_amount = in_msg_body~load_coins();
+        cell custom_payload_cs = in_msg_body~load_maybe_ref(); 
+        slice additional_data = in_msg_body~load_slice_ref(); 
+        slice to_user_address = additional_data~load_msg_addr();
+        slice refund_address = additional_data~load_msg_addr();
+        slice excess_address = additional_data~load_msg_addr();
+            
+        var lp_account = contracts::from_sources(
+            lp_account_idata(
+                my_address(), 
+                user_address
+            ),
+            storage::lp_account_code
+        );
+
+        throw_unless(error::invalid_caller, equal_slices(lp_account~address(params::workchain), ctx.at(SENDER)));
+
+        int liquidity = 0;
+        reserves::max_balance(storage_fee::pool);
+
+        if storage::total_supply_lp == 0 { 
+            ;; handle initial liquidity
+            ;; catch math errors
+            try {
+                throw_unless(error::low_liquidity, (tot_am0 > 0) & (tot_am1 > 0));
+                liquidity = pool::get_lp_provide_init_out(tot_am0, tot_am1);
+            } catch(_, _) { }
+
+            storage::total_supply_lp = liquidity;
+            ;; 1000 LP tokens will be locked, excesses minted to user
+            ;; will be <0 if get_lp_provide_init_out returns 0, 
+            ;; but (liquidity < min_lp_out) is still true
+            liquidity -= params::required_min_liquidity;
+
+            storage::reserve0 += tot_am0;
+            storage::reserve1 += tot_am1;
+        } else {
+            int new_collected_protocol_fees0 = 0;
+            int new_collected_protocol_fees1 = 0;
+
+            try { ;; catch math errors
+                (liquidity, new_collected_protocol_fees0, new_collected_protocol_fees1) = pool::get_lp_provide_out(tot_am0, tot_am1);
+            } catch(_, _) { }
+            
+            storage::total_supply_lp += liquidity;
+            ;; one side will be 0
+            storage::collected_token0_protocol_fee += new_collected_protocol_fees0;
+            storage::collected_token1_protocol_fee += new_collected_protocol_fees1;
+
+            storage::reserve0 += (tot_am0 - new_collected_protocol_fees0);
+            storage::reserve1 += (tot_am1 - new_collected_protocol_fees1);
+        }
+
+        ;; checks if
+        ;; - pool is locked
+        ;; - the user will get less than the minimum amount of liquidity
+        ;; - reserves exceeds max supply
+        if (storage::is_locked)
+            | (liquidity < min_lp_out)
+            | (storage::total_supply_lp > math::MAX_COINS)
+            | (storage::reserve0 > math::MAX_COINS) 
+            | (storage::reserve1 > math::MAX_COINS) {
+            ;; hardcoded 0 to avoid minting loop between pool and lp_account
+            ;; state_init needed since lp_account might be already destroyed
+            ;; no need to forward again custom_payload_cs
+            var lp_account_new = contracts::from_sources(
+                lp_account_idata(
+                    my_address(), 
+                    refund_address
+                ),
+                storage::lp_account_code
+            );
+
+            msgs::send_with_stateinit(
+                0, 
+                lp_account_new~address(params::workchain), 
+                lp_account_new~state_init(), 
+                lp_account::add_liquidity(
+                    tot_am0, 
+                    tot_am1, 
+                    0, 
+                    0,
+                    true, ;; both_positive? to true
+                    addr_none(), ;; force addr_none
+                    null(),
+                    addr_none(), ;; refund_address
+                    excess_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+        } else {
+            var lp_wallet = contracts::from_sources(
+                lp_wallet_idata(
+                    to_user_address, 
+                    my_address(), 
+                    storage::jetton_lp_wallet_code
+                ),
+                storage::jetton_lp_wallet_code
+            );
+            ;; check if fwd_amount is enough
+            int used_gas = ctx.at(FWD_FEE) + gas::pool::cb_add_liquidity;
+            int gas_available = ctx.at(MSG_VALUE) - (used_gas + storage_fee::pool); ;; estimate free gas after this call
+            if (fwd_amount > 0) & (
+                (gas_available - (gas::jetton_wallet::est_transfer + (ctx.at(FWD_FEE) * 2))) - fwd_amount <= 0
+            ) { ;; do not send transfer_notification, if gas is too low, mint may revert
+                fwd_amount = 0; 
+            }
+
+            msgs::send_with_stateinit(
+                0, 
+                lp_wallet~address(params::workchain), 
+                lp_wallet~state_init(),
+                jetton_wallet::mint(
+                    user_address, 
+                    excess_address, 
+                    liquidity,
+                    fwd_amount,
+                    custom_payload_cs
+                ),
+                CARRY_ALL_BALANCE
+            );
+            storage::save();
+        }
+        
+        return (true);
+    }
+
+    if ctx.at(OPCODE) == op::cb_refund_me {
+        ;; Sent by user's lp_account after adding liquidity
+        int tot_am0 = in_msg_body~load_coins();
+        int tot_am1 = in_msg_body~load_coins();
+        slice user_address = in_msg_body~load_msg_addr();
+        cell left_maybe_payload = in_msg_body~load_maybe_ref();
+        cell right_maybe_payload = in_msg_body~load_maybe_ref();
+
+        var lp_account = contracts::from_sources(
+            lp_account_idata(my_address(), user_address),
+            storage::lp_account_code
+        );
+        
+        throw_unless(error::invalid_caller, equal_slices(lp_account~address(params::workchain), ctx.at(SENDER)));
+
+        (int gas, int mode) = (0, CARRY_REMAINING_GAS);
+        if (tot_am0 > 0) & (tot_am1 > 0){
+            (gas, mode) = ((ctx.at(MSG_VALUE) - (ctx.at(FWD_FEE) + storage_fee::pool + gas::pool::cb_refund)) / 2, NORMAL);
+        } 
+    
+        if tot_am0 > 0 {
+            msgs::send_simple(
+                gas, 
+                storage::router_address, 
+                router::pay_to(
+                    user_address, 
+                    user_address, 
+                    user_address, 
+                    op::refund_ok, 
+                    0, 
+                    left_maybe_payload, 
+                    tot_am0, 
+                    storage::token0_address, 
+                    0, 
+                    storage::token1_address
+                ), 
+                mode
+            );
+        }
+
+        if tot_am1 > 0 {
+            msgs::send_simple(
+                gas, 
+                storage::router_address, 
+                router::pay_to(
+                    user_address, 
+                    user_address, 
+                    user_address, 
+                    op::refund_ok, 
+                    0, 
+                    right_maybe_payload, 
+                    0, 
+                    storage::token0_address, 
+                    tot_am1, 
+                    storage::token1_address
+                ), 
+                mode
+            );
+        }    
+    
+        return (true);
+    }
+    
+    return (false);
+}

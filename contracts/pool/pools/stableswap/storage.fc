@@ -1,0 +1,43 @@
+global int storage::amp;
+
+() storage::load() impure inline {
+    slice ds = get_data().begin_parse();
+    storage::is_locked = ds~load_bool();
+    storage::reserve0 = ds~load_coins();
+    storage::reserve1 = ds~load_coins();
+    storage::total_supply_lp = ds~load_coins();
+    storage::collected_token0_protocol_fee = ds~load_coins();
+    storage::collected_token1_protocol_fee = ds~load_coins();
+    storage::protocol_fee_address = ds~load_msg_addr();
+    storage::lp_fee = ds~load_uint16();
+    storage::protocol_fee = ds~load_uint16();
+    storage::amp = ds~load_uint32();
+
+    storage::_static = ds~load_ref();
+    slice static_data = storage::_static.begin_parse();
+    storage::router_address = static_data~load_msg_addr();
+    storage::token0_address = static_data~load_msg_addr();
+    storage::token1_address = static_data~load_msg_addr();
+    storage::jetton_lp_wallet_code = static_data~load_ref();
+    storage::lp_account_code = static_data~load_ref();
+
+    static_data.end_parse();
+    ds.end_parse();
+}
+
+() storage::save() impure inline {
+    set_data(begin_cell()
+        .store_bool(storage::is_locked)
+        .store_coins(storage::reserve0)
+        .store_coins(storage::reserve1)
+        .store_coins(storage::total_supply_lp)
+        .store_coins(storage::collected_token0_protocol_fee)
+        .store_coins(storage::collected_token1_protocol_fee)
+        .store_slice(storage::protocol_fee_address)
+        .store_uint16(storage::lp_fee)
+        .store_uint16(storage::protocol_fee)
+        .store_uint32(storage::amp)
+        .store_ref(storage::_static)
+    .end_cell());
+}
+

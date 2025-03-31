@@ -1,0 +1,60 @@
+;; handle pool calls
+
+(int) handle_pool_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::add_liquidity { 
+        int new_amount0 = in_msg_body~load_coins(); 
+        int new_amount1 = in_msg_body~load_coins();  
+        int min_lp_out = in_msg_body~load_coins();
+        int fwd_amount = in_msg_body~load_coins();
+        int both_positive? = in_msg_body~load_bool();
+        slice to_user = in_msg_body~load_msg_addr();
+        cell custom_payload_cs = in_msg_body~load_maybe_ref(); 
+        slice additional_fields = in_msg_body~load_slice_ref();
+        slice refund_address = additional_fields~load_msg_addr();
+        slice excess_address = additional_fields~load_msg_addr();
+
+        storage::amount0 += new_amount0;
+        storage::amount1 += new_amount1;
+
+        ;; logic needed to be able to pass min_lp_out > 0 and doesnt mint
+        ;; useful when we cant garantuee order of arrive of txs in more complex scenario
+        int mint? = false;
+        if both_positive? {
+            mint? = (min_lp_out > 0) & ((storage::amount0 > 0) & (storage::amount1 > 0));
+        } else {
+            mint? = (min_lp_out > 0) & (storage::amount0 + storage::amount1 > 0);
+        }
+
+        if mint? {
+            msgs::send_simple(
+                0, 
+                storage::pool_address, 
+                pool::cb_add_liquidity(
+                    storage::user_address, 
+                    storage::amount0, 
+                    storage::amount1, 
+                    to_user,
+                    min_lp_out,
+                    fwd_amount,
+                    custom_payload_cs,
+                    refund_address,
+                    excess_address
+                ),
+                CARRY_ALL_BALANCE | DESTROY_IF_ZERO
+            );
+
+            storage::amount0 = 0;
+            storage::amount1 = 0;
+        } else {
+            reserves::max_balance(storage_fee::lp_account);
+            utils::send_excesses(0, excess_address, QCARRY_ALL_BALANCE);
+        }
+
+        storage::save();
+        return (true);
+    }
+    
+    return (false);
+}

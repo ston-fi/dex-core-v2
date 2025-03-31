@@ -1,0 +1,99 @@
+const _MAX_ITERATIONS = 255;
+
+const error::not_converge = 5103;
+
+(int) calculate_invariant(int amplification_parameter, int left_balance, int right_balance) impure inline {
+    int sum = left_balance + right_balance; ;; S in the Curve version
+    if sum == 0 {
+        return 0;
+    }
+
+    int prev_invariant = 0; ;; Dprev in the Curve version
+    int invariant = sum; ;; D in the Curve version
+
+    repeat _MAX_ITERATIONS {
+        int d_p = invariant;
+        d_p = (d_p * invariant) / (left_balance * 2);
+        d_p = (d_p * invariant) / (right_balance * 2);
+
+        prev_invariant = invariant;
+
+        int first_term = (amplification_parameter * sum) + (d_p * 2);
+        int second_term = ((amplification_parameter - 1) * invariant) + (d_p * 3);
+        
+        invariant = muldiv(first_term, invariant, second_term);
+    
+        if abs(invariant - prev_invariant) <= 1 {
+            return invariant;
+        }
+    }
+
+    throw(error::not_converge);
+    
+    return 0;
+}
+
+(int) _get_out_balance(
+    int amplification_parameter,
+    int left_balance, 
+    int right_balance,
+    int invariant,
+    int side
+) impure inline {
+    int sum = left_balance;
+    int p_d = left_balance * 2;
+    
+    p_d = muldiv(p_d * right_balance, 2, invariant);
+    sum = sum + right_balance;
+
+    sum = sum - (side ? right_balance : left_balance);
+    int inv2 = invariant * invariant;
+
+    
+    ;; We remove the balance from c by multiplying it
+    int c = divc(inv2, amplification_parameter * p_d) * (side ? right_balance : left_balance);
+    int b = sum + (invariant / amplification_parameter);
+    
+    ;; We iterate to find the balance
+    int prev_token_balance = 0;
+    
+    ;; We multiply the first iteration outside the loop with the invariant to set the value of the initial approximation.
+    int token_balance = divc(inv2 + c, invariant + b);
+    
+    repeat _MAX_ITERATIONS {
+        prev_token_balance = token_balance;
+
+        token_balance = divc((token_balance * token_balance) + c, (token_balance * 2) + b - invariant);
+
+        if abs(token_balance - prev_token_balance) <= 1 {
+            return token_balance;
+        }
+    }
+    
+    throw(error::not_converge);
+
+    return 0;
+}
+
+;; Computes how many tokens can be taken out of a pool if `tokenAmount_in` are sent, given the current balances.
+(int) calc_out_given_in(
+    int amplification_parameter,
+    int left_balance, 
+    int right_balance,    
+    int side,
+    int token_amount_in,
+    int invariant
+) impure inline {
+    ;; out_given_in token x for y - polynomial equation to solve
+    ;; Amount out, so we round down overall.
+
+    int final_balance_out = _get_out_balance(
+        amplification_parameter,
+        side   ? (left_balance  + token_amount_in) : left_balance, 
+        ~ side ? (right_balance + token_amount_in) : right_balance,              
+        invariant,
+        side
+    );
+    
+    return (side ? right_balance : left_balance) - final_balance_out - 1;
+}

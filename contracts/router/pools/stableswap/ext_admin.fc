@@ -1,0 +1,57 @@
+;; messages from admin
+
+const _MIN_AMP = 1;
+const _MAX_AMP = 2000;
+
+(int) handle_ext_admin_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::set_params {
+        int new_amp = in_msg_body~load_uint32();
+        slice left_jetton_wallet = in_msg_body~load_msg_addr(); 
+        slice right_jetton_wallet = in_msg_body~load_msg_addr();
+        slice excesses_recipient = get_excesses_address(in_msg_body~load_msg_addr());
+        in_msg_body.end_parse();
+
+        ;; check gas
+        ;; -> Router -> Pool ->
+        throw_unless(error::insufficient_gas, ctx.at(MSG_VALUE) > ctx.at(FWD_FEE) * 3 
+            + storage_fee::router + gas::router::set_params 
+            + storage_fee::pool + gas::pool::internal_set_params);
+
+        ;; check params
+        throw_unless(error::invalid_amount, (_MIN_AMP <= new_amp) & (new_amp <= _MAX_AMP));
+        
+        throw_if(error::invalid_token, equal_slices(left_jetton_wallet, right_jetton_wallet));
+
+        throw_unless(error::wrong_workchain, left_jetton_wallet.address::check_workchain(params::workchain) 
+            & right_jetton_wallet.address::check_workchain(params::workchain)
+            & excesses_recipient.address::check_workchain(params::workchain));
+
+        var pool = contracts::from_sources(
+            pool_idata(
+                my_address(), 
+                left_jetton_wallet, 
+                right_jetton_wallet, 
+                storage::jetton_lp_wallet_code, 
+                storage::lp_account_code
+            ),
+            storage::pool_code
+        );
+        
+        reserves::max_balance(storage_fee::router);
+        msgs::send_with_stateinit(
+            0, 
+            pool~address(params::workchain), 
+            pool~state_init(), 
+            pool::internal_set_params(
+                excesses_recipient,
+                new_amp
+            ), 
+            CARRY_ALL_BALANCE
+        );
+        return (true);
+    }
+
+    return (false);
+}

@@ -1,0 +1,17 @@
+const error::no_liquidity = 80;
+const error::zero_output = 81;
+const error::invalid_caller = 82;
+const error::insufficient_gas = 83;
+const error::wrong_workchain = 85;
+const error::wrong_address = 86;
+const error::low_liquidity = 88;
+const error::math_error = 90;
+const error::invalid_amount = 92;
+const error::invalid_call = 93;
+const error::fee_out_range = 94;
+const error::invalid_token = 95;
+const error::empty_not_allowed = 96;
+const error::max_in_ratio = 97;
+const error::empty_cell = 99;
+
+const error::wrong_op = 0xFFFF;

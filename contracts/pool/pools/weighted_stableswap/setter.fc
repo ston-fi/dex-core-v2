@@ -1,0 +1,17 @@
+(int) handle_setter_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::set_rate {
+        int new_rate = in_msg_body~load_uint128();
+        
+        throw_unless(error::invalid_amount, new_rate > 0);
+        storage::rate = new_rate;
+
+        storage::save();
+        reserves::max_balance(storage_fee::pool);
+        utils::send_excesses(0, ctx.at(SENDER), QCARRY_ALL_BALANCE);
+        return (true);
+    }
+
+    return (false);
+}

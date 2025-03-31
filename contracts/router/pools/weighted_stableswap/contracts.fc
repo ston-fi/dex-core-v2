@@ -1,0 +1,19 @@
+(cell) pool::internal_set_params(
+    slice _excesses_address,
+    slice _side, 
+    int _new_amp,
+    int _new_rate,
+    int _new_w,
+    slice _setter_address
+) inline {
+    return begin_message(op::internal_set_params)
+        .store_slice(_excesses_address)
+        .store_slice(_side)
+        .store_uint(_new_amp, 128)
+        .store_uint(_new_rate, 128)
+        .store_uint(_new_w, 128)
+        .store_ref(begin_cell()
+            .store_slice(_setter_address)
+        .end_cell())
+    .end_cell();
+}

@@ -1,0 +1,12 @@
+slice get_excesses_address(slice _addr) impure inline {
+    _addr = _addr.address::is_none() ? ctx.at(SENDER) : _addr;
+    throw_unless(error::wrong_workchain, _addr.address::check_workchain(params::workchain));
+    return _addr;
+}
+
+(int) check_wc_nofail(slice _addr, int _wc) inline {
+    ifnot _addr.address::is_none() {
+        return _addr.address::get_workchain() == _wc;
+    }
+    return true;
+}

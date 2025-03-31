@@ -1,0 +1,142 @@
+(int) handle_pool_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    ;; send tokens, called from pools (on swap, liquidity providing, refund etc)
+    if ctx.at(OPCODE) == op::pay_to { 
+        slice owner = in_msg_body~load_msg_addr();
+        slice excesses_address = in_msg_body~load_msg_addr();
+        slice original_caller = in_msg_body~load_msg_addr();
+        _ = in_msg_body~load_uint(32); ;; ignore exit code
+        cell custom_payload = in_msg_body~load_maybe_ref();
+        slice additional_info = in_msg_body~load_slice_ref(); 
+        int fwd_ton_amount = additional_info~load_coins();
+        int amount0_out = additional_info~load_coins();
+        slice token0_address = additional_info~load_msg_addr();
+        int amount1_out = additional_info~load_coins();
+        slice token1_address = additional_info~load_msg_addr();
+
+        var pool = contracts::from_sources(
+            pool_idata(
+                my_address(), 
+                token0_address, 
+                token1_address, 
+                storage::jetton_lp_wallet_code, 
+                storage::lp_account_code
+            ),
+            storage::pool_code
+        );
+        throw_unless(error::invalid_caller, equal_slices(pool~address(params::workchain), ctx.at(SENDER))); ;; check if its a valid pool
+
+        int fwd_opcode = -1;
+        ifnot(custom_payload.null?()) {
+            slice tmp_custom_payload_ds = custom_payload.begin_parse();
+            if (tmp_custom_payload_ds.slice_bits() > 32) { ;; cross_swap = 32 + address
+                fwd_opcode = tmp_custom_payload_ds.preload_uint(32);
+            }
+        }
+        
+        ;; handle cross_swap
+        ;; we will check if:
+        ;; - fwd_opcode is correct
+        ;; - there is enough gas (ONLY for current call)
+        ;; 
+        ;; no need to check: ((amount0_out > 0) & (amount1_out == 0)) ^ ((amount0_out == 0) & (amount1_out > 0))
+
+        int used_gas = ctx.at(FWD_FEE) + gas::router::pay_to;
+        if (fwd_opcode == op::cross_swap) 
+            & (ctx.at(MSG_VALUE) > used_gas) {
+
+            ;; prepare for forwarding 
+            slice sent_jetton_address = amount0_out > 0 ? token0_address : token1_address;
+            int gas = ctx.at(MSG_VALUE) - used_gas; ;; remove gas for this call
+            int swap_amount = amount0_out + amount1_out; ;; one side is zero, so we can sum them
+
+            ;; call subfunction to handle crosswap
+            route_dex_messages(sent_jetton_address, gas, swap_amount, original_caller, custom_payload);
+        } else { 
+            ;; send jettons normally
+
+            ;; check gas
+            int gas_available = ctx.at(MSG_VALUE) - (used_gas + storage_fee::router); ;; estimate free gas after this call
+            if (fwd_ton_amount > 0) & (
+                (gas_available - (gas::jetton_wallet::est_transfer + (ctx.at(FWD_FEE) * 2))) - fwd_ton_amount <= 0
+            ) {
+                ;; do not send transfer_notification, if gas is too low
+                fwd_ton_amount = 0; 
+            }
+
+            reserves::max_balance(storage_fee::router);
+            ;; one is always zero
+            if amount0_out > 0 {
+                msgs::send_simple(
+                    0, 
+                    token0_address, 
+                    jetton_wallet::transfer(fwd_ton_amount, amount0_out, owner, excesses_address)
+                        .store_maybe_ref(custom_payload)
+                        .end_cell(), 
+                    QCARRY_ALL_BALANCE
+                );
+            } else {
+                msgs::send_simple(
+                    0, 
+                    token1_address, 
+                    jetton_wallet::transfer(fwd_ton_amount, amount1_out, owner, excesses_address)
+                        .store_maybe_ref(custom_payload)
+                        .end_cell(), 
+                    QCARRY_ALL_BALANCE
+                );
+            }
+        }
+
+        return (true);
+    }
+
+    if ctx.at(OPCODE) == op::pay_vault { 
+        slice owner = in_msg_body~load_msg_addr();
+        slice excesses_address = in_msg_body~load_msg_addr();
+        slice additional_info = in_msg_body~load_slice_ref(); 
+        int amount0_out = additional_info~load_coins();
+        slice token0_address = additional_info~load_msg_addr();
+        int amount1_out = additional_info~load_coins();
+        slice token1_address = additional_info~load_msg_addr();
+
+        var pool = contracts::from_sources(
+            pool_idata(
+                my_address(), 
+                token0_address, 
+                token1_address, 
+                storage::jetton_lp_wallet_code, 
+                storage::lp_account_code
+            ),
+            storage::pool_code
+        );
+        throw_unless(error::invalid_caller, equal_slices(pool~address(params::workchain), ctx.at(SENDER))); ;; check if its a valid pool
+
+        ;; send jettons normally
+        reserves::max_balance(storage_fee::router);
+        ;; one is always zero
+        var vault = contracts::from_sources(
+            vault_idata(
+                owner, 
+                amount0_out > 0 ? token0_address : token1_address, 
+                my_address()
+            ),
+            storage::vault_code
+        );
+
+        msgs::send_with_stateinit(
+            0, 
+            vault~address(params::workchain), 
+            vault~state_init(), 
+            vault::deposit_ref_fee(
+                amount0_out + amount1_out,
+                excesses_address
+            ), 
+            QCARRY_ALL_BALANCE
+        );
+        
+        return (true);
+    }
+
+    return (false);
+}

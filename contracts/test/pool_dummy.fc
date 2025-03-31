@@ -1,0 +1,124 @@
+#pragma version >=0.4.0;
+
+#include "../common/common.fc";
+#include "../pool/headers.fc";
+
+() storage::load() impure inline {
+    slice ds = get_data().begin_parse();
+    storage::is_locked = ds~load_bool();
+    storage::reserve0 = ds~load_coins();
+    storage::reserve1 = ds~load_coins();
+    storage::total_supply_lp = ds~load_coins();
+    storage::collected_token0_protocol_fee = ds~load_coins();
+    storage::collected_token1_protocol_fee = ds~load_coins();
+    storage::protocol_fee_address = ds~load_msg_addr();
+    storage::lp_fee = ds~load_uint(16);
+    storage::protocol_fee = ds~load_uint(16);
+
+    storage::_static = ds~load_ref();
+    slice static_data = storage::_static.begin_parse();
+    storage::router_address = static_data~load_msg_addr();
+    storage::token0_address = static_data~load_msg_addr();
+    storage::token1_address = static_data~load_msg_addr();
+    storage::jetton_lp_wallet_code = static_data~load_ref();
+    storage::lp_account_code = static_data~load_ref();
+    
+    static_data.end_parse();
+    ds.end_parse();
+}
+
+() storage::save() impure inline {
+    set_data(begin_cell()
+        .store_bool(storage::is_locked)
+        .store_coins(storage::reserve0)
+        .store_coins(storage::reserve1)
+        .store_coins(storage::total_supply_lp)
+        .store_coins(storage::collected_token0_protocol_fee)
+        .store_coins(storage::collected_token1_protocol_fee)
+        .store_slice(storage::protocol_fee_address)
+        .store_uint(storage::lp_fee, 16)
+        .store_uint(storage::protocol_fee, 16)
+        .store_ref(storage::_static)
+    .end_cell());
+}
+
+#include "../pool/get.fc"; 
+
+() handle_router_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::swap {
+        throw(7777);
+    }
+
+    if ctx.at(OPCODE) == op::provide_lp { 
+        throw(7777);
+    }
+
+    if ctx.at(OPCODE) == op::reset_gas {
+        throw(7777);
+    }
+
+    if ctx.at(OPCODE) == op::internal_update_status {
+        throw(7777);
+    }
+    
+    if ctx.at(OPCODE) == op::internal_update_pool_code {
+        cell new_code = in_msg_body~load_ref();
+        set_code(new_code);
+        return ();
+    }
+
+    if ctx.at(OPCODE) == op::internal_set_fees { 
+        throw(7777);
+    }
+
+    throw(error::wrong_op);
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    throw_if(error::empty_not_allowed, in_msg_body.slice_empty?());
+
+    ctx::init(my_balance, msg_value, in_msg_full, in_msg_body);
+
+    if ctx.at(IS_BOUNCED) { 
+        ;; mint should never
+        return ();
+    }
+
+    throw_unless(error::wrong_workchain, ctx.at(SENDER).address::check_workchain(params::workchain));
+    storage::load();
+
+    throw_if(error::invalid_token, equal_slices(storage::token0_address, storage::token1_address));
+
+    ;; handle collect_fees
+    if equal_slices(ctx.at(SENDER), storage::protocol_fee_address) {
+        throw(7777);
+    }
+
+    ;; handle swap, provide_lp and governance messages
+    if equal_slices(ctx.at(SENDER), storage::router_address) {
+        handle_router_messages();
+        return ();
+    }
+
+    throw(7777);
+}
+
+_ get_pool_data() method_id {
+    storage::load();
+    return (
+        storage::is_locked,
+        storage::router_address,
+        1337000000000,
+        storage::reserve0,
+        storage::reserve1,
+        storage::token0_address,
+        storage::token1_address,
+        storage::lp_fee,
+        storage::protocol_fee, 
+        storage::protocol_fee_address,
+        storage::collected_token0_protocol_fee, 
+        storage::collected_token1_protocol_fee
+    );
+}

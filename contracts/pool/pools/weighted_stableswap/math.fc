@@ -1,0 +1,84 @@
+const int __EPSILON = 1000000000000000000000000; ;; 0.001
+const int __MAX_ITERATIONS = 255;
+
+;; custom erros
+const error::compliment_out_of_range = 51002;
+const error::not_converge = 5103;
+const error::df_zero = 5104;
+
+(int) _invariant(int x, int y, int _p, int _q) inline {
+    x = math::fp::from(x);
+    y = math::fp::from(y);
+
+    ;; k = (x + r * y) * a + x^p * (r * y)^q
+    int p1 = (x + (storage::rate.math::fp::mul(y))).math::fp::mul(storage::amp);
+    int p2 = (x.math::fp::ow_pow(_p)).math::fp::mul((storage::rate.math::fp::mul(y)).math::fp::ow_pow(_q));
+    return p1 + p2;
+}
+
+(int) _dy_invariant(int x, int y, int _p, int _q) inline {
+    x = math::fp::from(x);
+    y = math::fp::from(y);
+
+    ;; a * r + q * y^(q-1) * r^q * x^p
+    int p2_0 = _q.math::fp::mul(y.math::fp::ow_pow(_q - math::ONE_DEC)); 
+    int p2_1 = p2_0.math::fp::mul(storage::rate.math::fp::ow_pow(_q));
+    return math::fp::mul(storage::amp, storage::rate) + p2_1.math::fp::mul(x.math::fp::ow_pow(_p));
+}
+
+(int) _dx_invariant(int x, int y, int _p, int _q) inline {
+    x = math::fp::from(x);
+    y = math::fp::from(y);
+
+    ;; a + p * x^(p - 1) * r^q * y^q
+    int p2_0 = _p.math::fp::mul(x.math::fp::ow_pow(_p - math::ONE_DEC)); 
+    int p2_1 = p2_0.math::fp::mul(storage::rate.math::fp::ow_pow(_q));
+    int p2_2 = p2_1.math::fp::mul(y.math::fp::ow_pow(_q));
+    return storage::amp + p2_2;
+}
+
+(int) solve_dx(int x, int y, int dy) impure inline {
+    int p = storage::w0;
+    int q = storage::w0.math::fp::complement();
+
+    int start_x = x;
+    int k = _invariant(x, y, p, q);
+    int i = 0;
+    int delta_f = 0;
+
+    do {
+        delta_f = _invariant(start_x, y + dy, p, q) - k;
+        int df_d = _dx_invariant(start_x, y + dy, p, q);
+
+        throw_if(error::df_zero, df_d == 0);
+        start_x -= math::fp::to(delta_f.math::fp::div(df_d));
+        
+        i += 1;
+        throw_if(error::not_converge, i > __MAX_ITERATIONS);
+    } until(abs(delta_f) <= __EPSILON);
+
+    return (x - start_x);
+}
+
+(int) solve_dy(int x, int y, int dx) impure inline {
+    int p = storage::w0;
+    int q = storage::w0.math::fp::complement();
+
+    int start_y = y;
+    int k = _invariant(x, y, p, q);
+    int i = 0;
+    int delta_f = 0;
+
+    do {
+        delta_f = _invariant(x + dx, start_y, p, q) - k;
+        int df_d = _dy_invariant(x + dx, start_y, p, q);
+
+        throw_if(error::df_zero, df_d == 0);
+        start_y -= math::fp::to(math::fp::div(delta_f, df_d));
+        
+        i += 1;
+        throw_if(error::not_converge, i > __MAX_ITERATIONS);
+    } until(abs(delta_f) <= __EPSILON);
+
+    return (y - start_y);
+}

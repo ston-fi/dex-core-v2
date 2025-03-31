@@ -1,0 +1,11 @@
+(cell) pool::internal_set_params(
+    slice _excesses_address,
+    slice _side_wallet,
+    int _new_w
+) inline {
+    return begin_message(op::internal_set_params)
+        .store_slice(_excesses_address)
+        .store_slice(_side_wallet)
+        .store_uint(_new_w, 128)
+    .end_cell();
+}

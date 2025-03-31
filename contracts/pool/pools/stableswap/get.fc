@@ -1,0 +1,18 @@
+_ get_pool_data() method_id {
+    storage::load();
+    return (
+        storage::is_locked,
+        storage::router_address,
+        storage::total_supply_lp,
+        storage::reserve0,
+        storage::reserve1,
+        storage::token0_address,
+        storage::token1_address,
+        storage::lp_fee,
+        storage::protocol_fee, 
+        storage::protocol_fee_address,
+        storage::collected_token0_protocol_fee, 
+        storage::collected_token1_protocol_fee,
+        storage::amp
+    );
+}

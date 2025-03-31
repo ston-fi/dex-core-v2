@@ -1,0 +1,9 @@
+#include "../../node_modules/@ston-fi/funcbox/autoload.fc";
+#include "errors.fc";
+#include "params.fc";
+#include "op.fc";
+#include "gas.fc";
+#include "contracts.fc";
+#include "utils.fc";
+#include "../pool/pools/<%= dexType %>/state_init.fc";
+#include "../pool/pools/<%= dexType %>/gas.fc";

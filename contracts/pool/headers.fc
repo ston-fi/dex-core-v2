@@ -1,0 +1,18 @@
+;; updated from swaps, providelp, burnlp
+global int   storage::is_locked;
+global int   storage::collected_token0_protocol_fee;
+global int   storage::collected_token1_protocol_fee;
+global int   storage::reserve0;
+global int   storage::reserve1; 
+global int   storage::total_supply_lp;
+global slice storage::protocol_fee_address;
+global int   storage::lp_fee;
+global int   storage::protocol_fee;
+
+;; static data
+global cell  storage::_static;
+global slice storage::router_address;
+global slice storage::token0_address;
+global slice storage::token1_address;
+global cell  storage::jetton_lp_wallet_code;
+global cell  storage::lp_account_code;

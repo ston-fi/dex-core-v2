@@ -1,0 +1,111 @@
+(int) handle_user_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::refund_me { 
+        cell left_maybe_payload = in_msg_body~load_maybe_ref();
+        cell right_maybe_payload = in_msg_body~load_maybe_ref();
+        in_msg_body.end_parse();
+
+        ;; at least one of the amounts should be > 0
+        throw_unless(error::no_liquidity, (storage::amount0 > 0) | (storage::amount1 > 0));
+
+        ;; -> LPAcc -> Pool -> Router -> JettonWalletA -> 
+        ;;                            -> JettonWalletB -> 
+        throw_unless(error::insufficient_gas, ctx.at(MSG_VALUE) > ctx.at(FWD_FEE) * 7  
+            + gas::lp_account::refund  ;; no storage_fee, since this destroy contract
+            + storage_fee::pool + gas::pool::cb_refund  
+            + storage_fee::router + gas::router::pay_to  
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer  
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer);
+
+        msgs::send_simple(
+            0, 
+            storage::pool_address, 
+            pool::cb_refund_me(
+                storage::amount0, 
+                storage::amount1, 
+                left_maybe_payload, 
+                right_maybe_payload
+            ), 
+            CARRY_ALL_BALANCE | DESTROY_IF_ZERO
+        );
+
+        storage::amount0 = 0;
+        storage::amount1 = 0;
+        
+        storage::save();
+        return (true);
+    }
+
+    if ctx.at(OPCODE) == op::direct_add_liquidity {
+        ;; check gas
+        ;; -> LPAcc -> Pool -> LPWal ->   
+        throw_unless(error::insufficient_gas, ctx.at(MSG_VALUE) > ctx.at(FWD_FEE) * 4 
+            + storage_fee::lp_account + gas::lp_account::direct_add_liquidity 
+            + storage_fee::pool + gas::pool::cb_add_liquidity 
+            + storage_fee::lp_wallet + gas::lp_wallet::mint);
+
+        int am0 = in_msg_body~load_coins();
+        int am1 = in_msg_body~load_coins();
+        int min_lp_out = in_msg_body~load_coins();
+        int fwd_amount = in_msg_body~load_coins();
+        slice to_user = in_msg_body~load_msg_addr();
+        cell custom_payload_cs = in_msg_body~load_maybe_ref(); 
+        slice additional_fields = in_msg_body~load_slice_ref();
+        slice refund_address = additional_fields~load_msg_addr();
+        slice excesses_address = additional_fields~load_msg_addr();
+
+        additional_fields.end_parse();
+        in_msg_body.end_parse();
+
+        throw_unless(error::wrong_address, 
+            to_user.address::check_workchain(params::workchain)
+            & refund_address.address::check_workchain(params::workchain)
+            & excesses_address.address::check_workchain(params::workchain));
+
+        ;; use all if 0
+        am0 = am0 ? am0 : storage::amount0;
+        am1 = am1 ? am1 : storage::amount1;
+        ;; check if min_lp_out, am0, am1 are all `> 0`
+        throw_unless(error::zero_output, (min_lp_out > 0) & ((am0 > 0) & (am1 > 0)));
+
+        storage::amount0 -= am0;
+        storage::amount1 -= am1;
+
+        ;; underflow would just throw an exception, no need to check
+        ;; explicit (>= 0) since negative values are considered as true, need to check
+        throw_unless(error::no_liquidity, (storage::amount0 >= 0) & (storage::amount1 >= 0));
+                
+        if storage::amount0 + storage::amount1 > 0  {
+            ;; call raw_reserve
+            reserves::max_balance(storage_fee::lp_account);
+        }
+
+        msgs::send_simple(
+            0, 
+            storage::pool_address, 
+            pool::cb_add_liquidity(
+                ctx.at(SENDER), 
+                am0, 
+                am1, 
+                to_user,
+                min_lp_out,
+                fwd_amount,
+                custom_payload_cs,
+                refund_address,
+                excesses_address
+            ), 
+            CARRY_ALL_BALANCE | DESTROY_IF_ZERO
+        );
+        storage::save();
+        return (true);
+    }
+
+    if ctx.at(OPCODE) == op::reset_gas {
+        reserves::exact(storage_fee::lp_account);
+        msgs::send_empty(0, storage::user_address, CARRY_ALL_BALANCE);
+        return (true);
+    }
+
+    return (false);
+}

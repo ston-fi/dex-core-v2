@@ -1,0 +1,65 @@
+() handle_protocolfee_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::collect_fees { ;; throwable
+        throw_unless(error::zero_output, (storage::collected_token0_protocol_fee > 0) & (storage::collected_token1_protocol_fee > 0));
+        ;; -> Pool -> Router -> JettonWalletA ->
+        ;;         -> Router -> JettonWalletB ->
+        throw_unless(error::insufficient_gas, ctx.at(MSG_VALUE) > ((ctx.at(FWD_FEE) * 7) 
+            + storage_fee::pool + gas::pool::collect_fees 
+            + storage_fee::router + gas::router::pay_to 
+            + gas::router::pay_to 
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer            
+            + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer)); ;; ~0.14 TON
+
+        cell maybe_payload0 = in_msg_body~load_maybe_ref();
+        cell maybe_payload1 = in_msg_body~load_maybe_ref();
+        in_msg_body.end_parse();
+
+        int gas = ((ctx.at(MSG_VALUE) - (ctx.at(FWD_FEE) + storage_fee::pool + gas::pool::collect_fees + storage_fee::router)) / 2) + storage_fee::router;
+
+        reserves::max_balance(storage_fee::pool);
+        msgs::send_simple(
+            gas, 
+            storage::router_address, 
+            router::pay_to(
+                storage::protocol_fee_address, 
+                storage::protocol_fee_address, 
+                storage::protocol_fee_address, 
+                0, 
+                0, 
+                maybe_payload0, 
+                storage::collected_token0_protocol_fee, 
+                storage::token0_address,
+                0,
+                storage::token1_address
+            ), 
+            NORMAL
+        );
+        msgs::send_simple(
+            0, 
+            storage::router_address, 
+            router::pay_to(
+                storage::protocol_fee_address, 
+                storage::protocol_fee_address, 
+                storage::protocol_fee_address, 
+                0, 
+                0, 
+                maybe_payload1, 
+                0, 
+                storage::token0_address,
+                storage::collected_token1_protocol_fee,
+                storage::token1_address
+            ), 
+            CARRY_ALL_BALANCE ;; the above transfer fixed amount, in this transaction we can carry left gas
+        );
+
+        storage::collected_token0_protocol_fee = 0;
+        storage::collected_token1_protocol_fee = 0;
+        
+        storage::save();
+        return ();
+    }
+
+    throw(error::wrong_op);
+}

@@ -1,0 +1,6 @@
+(cell) pool::internal_set_params(slice _excesses_address, int _new_amp) inline {
+    return begin_message(op::internal_set_params)
+        .store_slice(_excesses_address)
+        .store_uint32(_new_amp)
+    .end_cell();
+}

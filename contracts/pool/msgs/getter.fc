@@ -1,0 +1,70 @@
+;; handle onchain 'get' calls
+
+(int) handle_getter_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::getter_pool_data { 
+        reserves::max_balance(storage_fee::pool);
+
+        var out_msg_body = anyone::getter_pool_data(
+            storage::is_locked,
+            storage::router_address,
+            storage::total_supply_lp,
+            storage::reserve0,
+            storage::reserve1,
+            storage::token0_address,
+            storage::token1_address,
+            storage::lp_fee,
+            storage::protocol_fee,
+            storage::protocol_fee_address,
+            storage::collected_token0_protocol_fee,
+            storage::collected_token1_protocol_fee
+        );
+        msgs::send_simple(0, ctx.at(SENDER), out_msg_body, CARRY_ALL_BALANCE | IGNORE_ERRORS);
+        return (true);
+    }
+
+    if ctx.at(OPCODE) == op::getter_lp_account_address { 
+        reserves::max_balance(storage_fee::pool);
+        slice user_address = in_msg_body~load_msg_addr();
+        in_msg_body.end_parse();
+
+        var lp_account = contracts::from_sources(
+            lp_account_idata(my_address(), user_address),
+            storage::lp_account_code
+        );
+
+        var out_msg_body = anyone::getter_lp_account_address(lp_account~address(params::workchain));
+        msgs::send_simple(0, ctx.at(SENDER), out_msg_body, CARRY_ALL_BALANCE | IGNORE_ERRORS);
+        return (true);
+    }
+
+    if ctx.at(OPCODE) == op::ft::provide_wallet_address {
+        reserves::max_balance(storage_fee::pool);
+        ;; Reference implementation:
+        ;; https://github.com/ton-blockchain/token-contract/blob/920c5aa3a33ede6405b5653147895c9e27bfe535/ft/jetton-minter-discoverable.fc#L100
+        throw_unless(75, ctx.at(MSG_VALUE) > ctx.at(FWD_FEE) + gas::pool::provide_wallet_address);
+
+        slice owner_address = in_msg_body~load_msg_addr();
+        int include_address? = in_msg_body~load_uint(1);
+        in_msg_body.end_parse();
+
+        cell included_address = include_address? ? begin_cell().store_slice(owner_address).end_cell() : null();
+
+        var msg = begin_message(op::ft::take_wallet_address);
+
+        if owner_address.address::get_workchain() == params::workchain {
+            var lp_wallet = contracts::from_sources(
+                lp_wallet_idata(owner_address, my_address(), storage::jetton_lp_wallet_code),
+                storage::jetton_lp_wallet_code
+            );
+            msg = msg.store_slice(lp_wallet~address(params::workchain));
+        } else {
+            msg = msg.store_uint(0, 2); ;; addr_none
+        }
+        msgs::send_simple(0, ctx.at(SENDER), msg.store_maybe_ref(included_address).end_cell(), CARRY_ALL_BALANCE | IGNORE_ERRORS);
+        return (true);
+    }
+    
+    return (false); ;; wrong op
+}

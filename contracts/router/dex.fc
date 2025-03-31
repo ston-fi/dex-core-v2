@@ -1,0 +1,102 @@
+() route_dex_messages(slice _jetton_address, int _available_gas, int _sent_amount, slice _caller, cell _dex_payload) impure inline {
+
+    ;; instant throw, since no action is possible in this state
+    ;; should never happen
+    throw_unless(error::invalid_amount, _sent_amount > 0);
+
+    int transferred_op = 0;
+    slice token_wallet1 = null();
+    slice refund_address = null();
+    slice excesses_address = null();
+    int tx_deadline = 0;
+
+    try {
+        slice dex_payload = _dex_payload.begin_parse();
+        transferred_op = dex_payload~load_opcode();
+        token_wallet1 = dex_payload~load_msg_addr();
+        refund_address = dex_payload~load_msg_addr();
+        excesses_address = dex_payload~load_msg_addr();
+        tx_deadline = dex_payload~load_time();
+
+        throw_arg_unless(error::wrong_workchain, 1, 
+            token_wallet1.address::check_workchain(params::workchain)
+            & refund_address.address::check_workchain(params::workchain)
+            & excesses_address.address::check_workchain(params::workchain)
+        );
+    } catch(err_arg, err_code) {
+        ;; send back jettons
+        ;; abs() needed, if not 1 means its a VM error
+        reserves::max_balance(storage_fee::router);
+        msgs::send_simple(
+            0, 
+            _jetton_address, 
+            jetton_wallet::transfer(0, _sent_amount, _caller, _caller)
+                .store_uint(0, 1) ;; store same cell
+                .store_uint(abs(err_code != 1 ? err_code : err_arg.to_int()), 32)
+                .end_cell(), 
+            QCARRY_ALL_BALANCE
+        );
+        return ();
+    }
+
+    try { 
+        ;; handle cross calls (under same router)
+        transferred_op = transferred_op == op::cross_swap ? op::swap : transferred_op;
+
+        throw_arg_if(op::transfer_bounce_invalid_request, 1, (transferred_op != op::swap) & (transferred_op != op::provide_lp));
+        throw_arg_if(op::transfer_bounce_invalid_pool, 1, equal_slices(_jetton_address, token_wallet1));
+        throw_arg_if(op::transfer_bounce_locked, 1, storage::is_locked);
+        ;; check chain of the sender, reject if not in the same chain
+        throw_arg_unless(op::transfer_bounce_wrong_wc, 1, _caller.address::check_workchain(params::workchain));
+        throw_arg_unless(op::transfer_bounce_tx_expired, 1, tx_deadline > now());
+
+        ;; -> Router -> Pool -> Router -> JettonWallet(A|B) ->
+        ;;                   -> Router -> Vault ->
+        ;; when swap + ref address
+        throw_arg_if(op::transfer_bounce_low_gas, 1, (transferred_op == op::swap) 
+            & (_available_gas < (ctx.at(FWD_FEE) * 7
+                + storage_fee::router + gas::router::route
+                + storage_fee::pool + gas::pool::swap
+                + gas::router::pay_to
+                + storage_fee::vault + gas::router::pay_vault + gas::vault::deposit_ref_fee
+                + storage_fee::est_jetton_wallet + gas::jetton_wallet::est_transfer)
+            )
+        );
+        
+        ;; -> Router -> Pool -> LPAccount -> Pool -> LPWallet ->
+        throw_arg_if(op::transfer_bounce_low_gas, 1, (transferred_op == op::provide_lp) 
+            & (_available_gas < ((ctx.at(FWD_FEE) * 6)
+                + storage_fee::router + gas::router::route
+                + storage_fee::pool + gas::pool::provide_lp
+                + storage_fee::lp_account + gas::lp_account::add_liquidity
+                + gas::pool::cb_add_liquidity
+                + storage_fee::lp_wallet + gas::lp_wallet::mint)
+            )
+        );
+        
+        ;; route call to the correct pool
+        var pool = contracts::from_sources(
+            pool_idata(my_address(), _jetton_address, token_wallet1, storage::jetton_lp_wallet_code,  storage::lp_account_code),
+            storage::pool_code
+        );
+
+        reserves::max_balance(storage_fee::router);
+        msgs::send_with_stateinit(
+            0, 
+            pool~address(params::workchain), 
+            pool~state_init(), 
+            pool::$route(transferred_op, _caller, _sent_amount, _jetton_address, token_wallet1, _dex_payload), 
+            CARRY_ALL_BALANCE
+        );
+    } catch(err_arg, err_code) {
+        ;; send back jettons
+        ;; abs() needed, if not 1 means its a VM error
+        reserves::max_balance(storage_fee::router);
+        var out_msg_body = jetton_wallet::transfer(0, _sent_amount, refund_address, excesses_address)
+            .store_uint(0, 1) ;; store same cell
+            .store_uint(abs(err_code != 1 ? err_code : err_arg.to_int()), 32);
+        msgs::send_simple(0, _jetton_address, out_msg_body.end_cell(), QCARRY_ALL_BALANCE);
+    }
+
+    return ();
+}

@@ -1,0 +1,22 @@
+;; messages from admin
+
+(int) handle_ext_router_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::internal_set_params {
+        slice resp = in_msg_body~load_msg_addr();
+        int new_amp = in_msg_body~load_uint32();
+
+        ;; checks done in router
+        storage::amp = new_amp;
+
+        storage::save();
+
+        reserves::max_balance(storage_fee::pool);
+        utils::send_excesses(0, resp, QCARRY_ALL_BALANCE);
+
+        return (true);
+    }
+
+    return (false);
+}

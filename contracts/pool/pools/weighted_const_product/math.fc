@@ -1,0 +1,33 @@
+const _MAX_IN_RATIO = 300000000000000000; ;; 0.3e18
+
+int _invariant(int _left_balance, int _right_balance, int _w0, int _w1) inline {
+    _left_balance = _left_balance.math::fp::from();
+    _right_balance = _right_balance.math::fp::from();
+
+    int _left_pow = _left_balance.math::fp::ow_pow_up(_w0);
+    int _right_pow = _right_balance.math::fp::ow_pow_up(_w1);
+    
+    return math::fp::mul(_left_pow, _right_pow);
+}
+
+int calc_out_given_in(int _balance_in, int _weight_in, int _amount_in, int _balance_out) impure inline {
+    ;; https://github.com/balancer/balancer-v2-monorepo/blob/master/pkg/pool-weighted/contracts/WeightedMath.sol
+    
+    ;; add decimals
+    _balance_in = _balance_in.math::fp::from();
+    _amount_in = _amount_in.math::fp::from();
+    _balance_out = _balance_out.math::fp::from();
+
+    throw_unless(error::max_in_ratio, _amount_in <= _balance_in.math::fp::mul(_MAX_IN_RATIO));
+
+    ;; out weight is always a complement (1 - in)
+    int weight_out = _weight_in.math::fp::complement();
+
+    int denominator = _balance_in + _amount_in;
+    int base = _balance_in.math::fp::div_up(denominator);
+    int exponent = _weight_in.math::fp::div(weight_out);
+    int power = base.math::fp::ow_pow_up(exponent);
+
+    ;; result without decimals
+    return _balance_out.math::fp::mul(power.math::fp::complement()).math::fp::to();
+}

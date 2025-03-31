@@ -1,0 +1,24 @@
+(int) handle_vault_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+    if ctx.at(OPCODE) == op::vault_pay_to {
+        int amount_out = in_msg_body~load_coins();
+        slice token_address = in_msg_body~load_msg_addr();
+        slice to_address = in_msg_body~load_msg_addr(); 
+        in_msg_body.end_parse();
+
+        var vault = contracts::from_sources(
+            vault_idata(to_address, token_address, my_address()),
+            storage::vault_code
+        );
+        throw_unless(error::invalid_caller, equal_slices(vault~address(params::workchain), ctx.at(SENDER))); ;; check if its a valid vault
+
+        reserves::max_balance(storage_fee::router);
+        var msg = jetton_wallet::transfer(0, amount_out, to_address, to_address)
+            .store_uint(0, 1);
+
+        msgs::send_simple(0, token_address, msg.end_cell(), QCARRY_ALL_BALANCE);
+        return (true);
+    }
+
+    return (false);
+}

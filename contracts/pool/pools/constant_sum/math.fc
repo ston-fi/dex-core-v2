@@ -1,0 +1,3 @@
+(int) norm_invariant(int left_balance, int right_balance) impure inline {
+    return (left_balance + right_balance) / 2;
+}

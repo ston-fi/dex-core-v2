@@ -1,0 +1,8 @@
+#include "headers.fc";
+#include "pools/<%= dexType %>/<%= dexType %>.fc";
+#include "get.fc"; 
+#include "msgs/lp_account.fc"; 
+#include "msgs/lp_wallet.fc"; 
+#include "msgs/protocolfee.fc"; 
+#include "msgs/router.fc"; 
+#include "msgs/getter.fc"; 

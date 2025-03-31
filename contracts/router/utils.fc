@@ -1,0 +1,34 @@
+(cell) pack_temp_upgrade(int end_code, cell code, int end_admin, slice admin, int end_pool_code, cell pool_code) inline {
+    cell data = begin_cell()
+        .store_time(end_code)
+        .store_time(end_admin)
+        .store_time(end_pool_code)
+        .store_slice(admin)
+        .store_ref(code)
+        .store_ref(pool_code)
+    .end_cell();
+    return data;
+}
+
+(int, cell, int, slice, int, cell) unpack_temp_upgrade(cell c_data) impure inline {
+    slice s_data = c_data.begin_parse();
+    
+    int end_code = s_data~load_time(); 
+    int end_admin = s_data~load_time(); 
+    int end_pool_code = s_data~load_time();
+    
+    slice admin = s_data~load_msg_addr();
+    cell code = s_data~load_ref();
+    cell pool_code = s_data~load_ref();
+    
+    s_data.end_parse();
+
+    return (
+        end_code, 
+        code, 
+        end_admin, 
+        admin,
+        end_pool_code,
+        pool_code
+    );
+}

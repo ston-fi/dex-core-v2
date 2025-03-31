@@ -1,0 +1,17 @@
+;; change workchain if want to deploy dex in another one
+const params::workchain = 0;
+
+;; change version
+const params::uri_version = "v1";
+const params::version_major = <%= version[0] %>;
+const params::version_minor = <%= version[1] %>;
+const params::version_development = "<%= version[3] %>";
+
+const params::required_min_liquidity = 1001;
+const params::fee_divider = 10000;
+const params::min_fee = 0; ;; 0%
+const params::max_fee = 100; ;; 1%
+const params::uri_base = "https://meta.ston.fi/lp/";
+const params::uri_end = ".json";
+const params::twodays = time::SECONDS_PER_DAY * 2; ;; 24 * 60 * 60 * 2
+const params::sevendays = time::SECONDS_PER_DAY * 7; ;; 24 * 60 * 60 * 7

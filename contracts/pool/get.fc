@@ -1,0 +1,50 @@
+;; get methods
+
+_ get_pool_type() method_id {
+    return "<%= dexType %>";
+}
+
+_ get_lp_account_address(slice owner_address) method_id {
+    storage::load();
+
+    throw_unless(error::wrong_workchain, owner_address.address::check_workchain(params::workchain));
+
+    var lp_account = contracts::from_sources(
+        lp_account_idata(my_address(), owner_address),
+        storage::lp_account_code
+    );
+
+    return lp_account~address(params::workchain); 
+}
+
+;; standard jetton 'get' methods 
+(int, int, slice, cell, cell) get_jetton_data() method_id {
+    storage::load();
+    int hashpart = address::get_hashpart(my_address());
+
+    cell content_lp = begin_cell()
+        .store_uint(0x01, 8)
+        .store_slice(params::uri_base)
+        .store_slice(params::uri_version)
+        .store_slice("/")
+        .store_slice(utils::number_to_slice(params::workchain))
+        .store_slice(":")
+        .store_slice(utils::address_to_hex_string(hashpart))
+        .store_slice(params::uri_end)
+    .end_cell();
+
+    return (storage::total_supply_lp, -1, storage::router_address, content_lp, storage::jetton_lp_wallet_code);
+}
+
+slice get_wallet_address(slice owner_address) method_id {
+    storage::load();
+
+    throw_unless(error::wrong_workchain, owner_address.address::check_workchain(params::workchain));
+
+    var lp_wallet = contracts::from_sources(
+        lp_wallet_idata(owner_address, my_address(), storage::jetton_lp_wallet_code),
+        storage::jetton_lp_wallet_code
+    );
+
+    return lp_wallet~address(params::workchain); 
+}

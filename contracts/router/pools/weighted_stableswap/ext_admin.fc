@@ -1,0 +1,62 @@
+;; messages from admin
+
+(int) handle_ext_admin_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::set_params {
+        (int new_amp, int new_rate, int new_w) = (in_msg_body~load_uint128(), in_msg_body~load_uint128(), in_msg_body~load_uint128());
+        (slice side_wallet, slice new_setter) = (in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr());
+        slice ref_data = in_msg_body~load_slice_ref();
+        in_msg_body.end_parse();
+
+        (slice left_jetton_wallet, slice right_jetton_wallet) = (ref_data~load_msg_addr(), ref_data~load_msg_addr());
+        slice excesses_recipient = get_excesses_address(ref_data~load_msg_addr());
+        ref_data.end_parse();
+
+        ;; check gas
+        ;; -> Router -> Pool ->
+        throw_unless(error::insufficient_gas, ctx.at(MSG_VALUE) > ctx.at(FWD_FEE) * 3 
+            + storage_fee::router + gas::router::set_params 
+            + storage_fee::pool + gas::pool::internal_set_params);
+
+        ;; check params
+        ;; 0 new_rate will leave pool param unchanged
+        ;; this is done to be able to init pool without setting an initial unused rate
+        throw_unless(error::invalid_amount, (0 < new_w) & (new_w < math::ONE_DEC));
+        throw_unless(error::math_error, (new_amp <= (2000 * math::ONE_DEC)));
+
+        throw_unless(error::invalid_call, equal_slices(side_wallet, left_jetton_wallet) 
+            | equal_slices(side_wallet, right_jetton_wallet)); 
+
+        throw_if(error::invalid_token, equal_slices(left_jetton_wallet, right_jetton_wallet));
+
+        throw_unless(error::wrong_workchain, left_jetton_wallet.address::check_workchain(params::workchain) 
+            & right_jetton_wallet.address::check_workchain(params::workchain)
+            & excesses_recipient.address::check_workchain(params::workchain)
+            & new_setter.check_wc_nofail(params::workchain));
+
+        var pool = contracts::from_sources(
+            pool_idata(my_address(), left_jetton_wallet, right_jetton_wallet, storage::jetton_lp_wallet_code, storage::lp_account_code),
+            storage::pool_code
+        );
+        
+        reserves::max_balance(storage_fee::router);
+        msgs::send_with_stateinit(
+            0, 
+            pool~address(params::workchain), 
+            pool~state_init(), 
+            pool::internal_set_params(
+                excesses_recipient,
+                side_wallet,
+                new_amp,
+                new_rate,
+                new_w,
+                new_setter
+            ), 
+            CARRY_ALL_BALANCE
+        );
+        return (true);
+    }
+
+    return (false);
+}

@@ -1,0 +1,60 @@
+;; get methods
+
+_ get_pool_address(slice token0, slice token1) method_id {
+    storage::load();
+
+    throw_if(error::wrong_address, equal_slices(token0, token1)); 
+    throw_unless(error::wrong_workchain, token0.address::check_workchain(params::workchain));
+    throw_unless(error::wrong_workchain, token1.address::check_workchain(params::workchain));
+
+    var pool = contracts::from_sources(
+        pool_idata(my_address(), token0, token1, storage::jetton_lp_wallet_code,  storage::lp_account_code),
+        storage::pool_code
+    );
+
+    return pool~address(params::workchain);
+}
+
+_ get_vault_address(slice user, slice token) method_id {
+    storage::load();
+
+    throw_unless(error::wrong_workchain, token.address::check_workchain(params::workchain));
+    throw_unless(error::wrong_workchain, user.address::check_workchain(params::workchain));
+
+    var vault = contracts::from_sources(
+        vault_idata(user, token, my_address()),
+        storage::vault_code
+    );
+
+    return vault~address(params::workchain);
+}
+
+_ get_router_data() method_id {
+    storage::load();
+    
+    return (
+        storage::id,
+        "<%= dexType %>",
+        storage::is_locked,
+        storage::admin_address,
+        storage::temp_upgrade,
+        storage::pool_code,
+        storage::jetton_lp_wallet_code,
+        storage::lp_account_code,
+        storage::vault_code
+    );
+}
+
+_ get_upgraded_pool_code() method_id {
+    storage::load();
+    
+    return (storage::upgrade_pool_code);
+}
+
+_ get_router_version() method_id {
+    return (
+        params::version_major, 
+        params::version_minor, 
+        params::version_development
+    );
+}

@@ -1,0 +1,35 @@
+;; messages from admin
+
+(int) handle_ext_router_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::internal_set_params {
+        (slice resp, slice side) = (in_msg_body~load_msg_addr(), in_msg_body~load_msg_addr());
+        (int new_amp, int new_rate, int new_w) = (in_msg_body~load_uint128(), in_msg_body~load_uint128(), in_msg_body~load_uint128());
+        slice additional_data = in_msg_body~load_slice_ref();
+        slice new_setter = additional_data~load_msg_addr();
+
+        ;; checks done in router
+        storage::amp = new_amp;
+        storage::rate = new_rate ? new_rate : storage::rate;
+        storage::rate_setter_address = new_setter;
+        ;; checks done in router
+        if (storage::w0 == 0) & (new_w > 0) {
+            ;; w0 is empty, override it
+            ;; can be done only once
+            if equal_slices(side, storage::token0_address) {
+                storage::w0 = new_w;
+            } else {
+                storage::w0 = new_w.math::fp::complement();
+            }
+        }
+        storage::save();
+
+        reserves::max_balance(storage_fee::pool);
+        utils::send_excesses(0, resp, QCARRY_ALL_BALANCE);
+
+        return (true);
+    }
+
+    return (false);
+}

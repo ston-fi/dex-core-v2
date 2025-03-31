@@ -1,0 +1,38 @@
+#pragma version >=0.4.0;
+
+#include "common/common.fc";
+#include "lp_account/lp_account.fc";
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    throw_if(error::empty_not_allowed, in_msg_body.slice_empty?());
+    
+    ctx::init(my_balance, msg_value, in_msg_full, in_msg_body);
+    if ctx.at(IS_BOUNCED) { 
+        ;; dont handle bounced messages
+        return ();
+    }
+
+    throw_unless(error::wrong_workchain, ctx.at(SENDER).address::check_workchain(params::workchain));
+    storage::load();
+
+    ;; handle message from pool
+    if equal_slices(ctx.at(SENDER), storage::pool_address) {
+        if handle_pool_messages() {
+            return ();
+        }
+    }
+
+    ;; handle message from user
+    if equal_slices(ctx.at(SENDER), storage::user_address) {
+        if handle_user_messages() {
+            return ();
+        }
+    }
+
+    ;; make sure that the message has a valid opcode
+    if handle_getter_messages() {
+        return (); 
+    }
+
+    throw(error::wrong_op);
+}

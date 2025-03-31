@@ -1,0 +1,37 @@
+;; Definitions taken from https://github.com/ton-blockchain/ton/blob/master/crypto/fift/lib/TonUtil.fif, see `Gram,` and `Addr,` definitions
+
+{-
+    serialize
+        .store_bool(<%= defaultIsLocked %>) ;; storage::is_locked
+        .store_coins(0) ;; storage::reserve0
+        .store_coins(0) ;; storage::reserve1
+        .store_coins(0) ;; storage::total_supply_lp
+        .store_coins(0) ;; storage::collected_token0_protocol_fee
+        .store_coins(0) ;; storage::collected_token1_protocol_fee
+        .store_uint(0, 2)   ;; storage::protocol_fee_address
+        .store_uint(<%= defaultLPFee %>, 16) ;; storage::lp_fee 
+        .store_uint(<%= defaultProtocolFee %>, 16) ;; storage::protocol_fee
+    equivalent to <b <%= defaultIsLocked %> 1 u, 0 Gram, 0 Gram, 0 Gram, 0 Gram, 0 Gram, b{00} s, <%= defaultLPFee %> 16 u, <%= defaultProtocolFee %> 16 u, b> <s PUSHSLICE
+-}
+(slice) _pool_idata() inline asm "<b <%= defaultIsLocked %> 1 u, 0 -1 { 1+ 2dup 8 * ufits } until rot over 4 u, -rot 8 * u, 0 -1 { 1+ 2dup 8 * ufits } until rot over 4 u, -rot 8 * u, 0 -1 { 1+ 2dup 8 * ufits } until rot over 4 u, -rot 8 * u, 0 -1 { 1+ 2dup 8 * ufits } until rot over 4 u, -rot 8 * u, 0 -1 { 1+ 2dup 8 * ufits } until rot over 4 u, -rot 8 * u, b{00} s, <%= defaultLPFee %> 16 u, <%= defaultProtocolFee %> 16 u, b> <s PUSHSLICE";
+
+(cell) pool_idata(slice _router_address, slice _first_jetton_address, slice _second_jetton_address, cell _jetton_lp_wallet_code, cell _lp_account_code) inline {    
+    var _pool_2_data = begin_cell()
+        .store_slice(_router_address); ;; storage::router_address
+    if _first_jetton_address.slice_hash() > _second_jetton_address.slice_hash() {
+        _pool_2_data = _pool_2_data
+            .store_slice(_first_jetton_address)   ;; storage::token0_address
+            .store_slice(_second_jetton_address); ;; storage::token1_address
+    } else {
+        _pool_2_data = _pool_2_data
+            .store_slice(_second_jetton_address) ;; storage::token0_address
+            .store_slice(_first_jetton_address); ;; storage::token1_address
+    }
+    _pool_2_data = _pool_2_data
+            .store_ref(_jetton_lp_wallet_code)  ;; storage::jetton_lp_wallet_code
+            .store_ref(_lp_account_code);        ;; storage::lp_account_code
+    return begin_cell()
+        .store_slice(_pool_idata())
+        .store_ref(_pool_2_data.end_cell()) 
+    .end_cell();
+}

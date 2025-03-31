@@ -1,0 +1,332 @@
+() handle_router_messages() impure inline {
+    slice in_msg_body = ctx.at(BODY);
+
+    if ctx.at(OPCODE) == op::swap {
+        ;; common dex fields
+        ;; usually not needed since it uses to_address and refund_address
+        slice from_user_address = in_msg_body~load_msg_addr();
+        ;; one side will always be 0, and 0 < amountX < 2^120-1
+        int amount0 = in_msg_body~load_coins();
+        int amount1 = in_msg_body~load_coins();
+
+        slice dex_payload = in_msg_body~load_slice_ref();
+        dex_payload~skip_bits(32);   ;; skip op 
+        dex_payload~load_msg_addr(); ;; skip token_wallet1
+
+        ;; skip validation, done in router
+        slice refund_address = dex_payload~load_msg_addr();
+        slice excesses_address = dex_payload~load_msg_addr();
+        int tx_deadline = dex_payload~load_time();
+
+        int min_out = 1;
+        slice to_address = null(); 
+        int fwd_ton_amount = 0;
+        cell custom_payload_cs = null(); 
+        int refund_fwd_ton_amount = 0;
+        cell refund_payload_cs = null(); 
+        int ref_value = 0;
+        slice ref_address = null(); 
+
+        try { ;; check call_payload body, refund to refund_address if fails
+            slice call_payload = dex_payload~load_slice_ref(); 
+
+            min_out = call_payload~load_coins();
+            to_address = call_payload~load_msg_addr(); 
+            fwd_ton_amount = call_payload~load_coins();
+            custom_payload_cs = call_payload~load_maybe_ref(); 
+            refund_fwd_ton_amount = call_payload~load_coins();
+            refund_payload_cs = call_payload~load_maybe_ref(); 
+            ref_value = call_payload~load_uint16(); 
+            ref_address = call_payload~load_msg_addr(); 
+
+            to_address = to_address.address::is_none() ? from_user_address : to_address;
+
+            throw_arg_unless(error::wrong_workchain, 1, 
+                to_address.address::check_workchain(params::workchain)
+                & ref_address.address::check_workchain_nofail(params::workchain)
+            );
+        
+            call_payload.end_parse();
+            dex_payload.end_parse();
+        } catch(err_arg, err_code) {
+            ;; send back jettons
+            ;; abs() needed, if not 1 means its a VM error
+            reserves::max_balance(storage_fee::pool);
+            msgs::send_simple(
+                0, 
+                ctx.at(SENDER), 
+                router::pay_to(
+                    from_user_address,
+                    refund_address, 
+                    excesses_address,
+                    abs(err_code != 1 ? err_code : err_arg.to_int()), 
+                    0,  
+                    null(), ;; cant send anything here , use std transfer
+                    amount0, 
+                    storage::token0_address, 
+                    amount1, 
+                    storage::token1_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+            
+            return ();
+        }
+
+        ;; validate the swap
+        ;; refund if not enough liquidity or not enough output or output less than min_out
+        try {
+            ;; directly throw if pool is locked
+            throw_arg_if(op::swap_pool_locked, 1, storage::is_locked);
+            throw_arg_if(op::swap_fee_out_of_bounds, 1, (ref_value > params::max_fee) | (ref_value < params::min_fee));
+
+            ;; initialize variables
+            int out0 = 0; 
+            int out1 = 0; 
+            int protocol_fee_out = 0; 
+            int ref_fee_out0 = 0; 
+            int ref_fee_out1 = 0;
+            ;; if no ref address - set fee value to 0
+            ref_value = ref_address.preload_uint(2) == 0 ? 0 : ref_value;
+            
+            if amount0 { 
+                ;; swap token0 for token1
+                (out1, protocol_fee_out, ref_fee_out1) = pool::get_swap_out(true, ref_value, amount0, storage::reserve0, storage::reserve1);
+                storage::reserve0 += amount0;
+                storage::reserve1 -= (out1 + protocol_fee_out + ref_fee_out1);
+                storage::collected_token1_protocol_fee += protocol_fee_out;
+            } else { 
+                ;; no need for elseif, see above
+                ;; swap token1 for token0
+                (out0, protocol_fee_out, ref_fee_out0) = pool::get_swap_out(false, ref_value, amount1, storage::reserve1, storage::reserve0);
+                storage::reserve0 -= (out0 + protocol_fee_out + ref_fee_out0);
+                storage::reserve1 += amount1;
+                storage::collected_token0_protocol_fee += protocol_fee_out;
+            }
+
+            ;; one side will always be zero, so we can sum
+            int out = out0 + out1;
+
+            ;; additional checks
+            throw_arg_unless(op::swap_refund_tx_expired, 1, tx_deadline > now());
+            throw_arg_if(op::swap_refund_no_liq, 1, storage::total_supply_lp <= 0);
+            throw_arg_if(op::swap_refund_0_out, 1, out < 1);
+            throw_arg_if(op::swap_refund_slippage, 1, min_out > out);
+            throw_arg_if(op::swap_refund_reserve_err, 1, (storage::reserve0 > math::MAX_COINS) 
+                | (storage::reserve1 <= 0) 
+                | (storage::reserve1 > math::MAX_COINS) 
+                | (storage::reserve0 <= 0));
+
+            reserves::max_balance(storage_fee::pool);
+            if (ref_address.preload_uint(2) != 0) & (ref_fee_out0 + ref_fee_out1 > 0) { ;; 2 messages, pay referral, check ref_fee_out
+                msgs::send_simple(ctx.at(FWD_FEE) * 3 + storage_fee::vault + gas::router::pay_vault + gas::vault::deposit_ref_fee, 
+                    ctx.at(SENDER),
+                    router::pay_vault(
+                        ref_address, 
+                        excesses_address,
+                        ref_fee_out0, 
+                        storage::token0_address, 
+                        ref_fee_out1, 
+                        storage::token1_address), 
+                    NORMAL
+                );
+            }
+
+            msgs::send_simple(
+                0, 
+                ctx.at(SENDER), 
+                router::pay_to(
+                    from_user_address,
+                    to_address, 
+                    excesses_address,
+                    op::swap_ok, 
+                    fwd_ton_amount, 
+                    custom_payload_cs, 
+                    out0, 
+                    storage::token0_address, 
+                    out1, 
+                    storage::token1_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+            storage::save();
+        } catch(err_arg, err_code) {
+            ;; send back jettons
+            ;; abs() needed, if not 1 means its a VM error
+            reserves::max_balance(storage_fee::pool);
+            msgs::send_simple(
+                0, 
+                ctx.at(SENDER), 
+                router::pay_to(
+                    from_user_address,
+                    refund_address, 
+                    excesses_address,
+                    abs(err_code != 1 ? err_code : err_arg.to_int()), 
+                    refund_fwd_ton_amount, 
+                    refund_payload_cs, ;; clear custom_payload_cs, use refund_payload_cs
+                    amount0, 
+                    storage::token0_address, 
+                    amount1, 
+                    storage::token1_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+        }
+        return ();
+    }
+
+    if ctx.at(OPCODE) == op::provide_lp { 
+        ;; common dex fields
+        slice from_user = in_msg_body~load_msg_addr();
+        int amount0 = in_msg_body~load_coins(); 
+        int amount1 = in_msg_body~load_coins();
+        slice dex_payload = in_msg_body~load_slice_ref();
+
+        dex_payload~skip_bits(32); ;; skip op
+        dex_payload~load_msg_addr(); ;; skip token_wallet1 
+
+        ;; skip validation, done in router
+        slice refund_address = dex_payload~load_msg_addr();
+        slice excesses_address = dex_payload~load_msg_addr();
+        int tx_deadline = dex_payload~load_time();
+
+        int min_lp_out = 0;
+        slice to_user = null();
+        int both_positive? = 0;
+        int fwd_amount = 0;
+        cell custom_payload_cs = null(); 
+            
+        try {
+            slice call_payload = dex_payload~load_slice_ref();
+
+            min_lp_out = call_payload~load_coins();
+            to_user = call_payload~load_msg_addr();
+            both_positive? = call_payload~load_bool();
+            fwd_amount = call_payload~load_coins();
+            custom_payload_cs = call_payload~load_maybe_ref();
+
+            call_payload.end_parse();
+            dex_payload.end_parse();
+
+            throw_arg_unless(op::provide_refund_wrong_workchain, 1, to_user.address::check_workchain(params::workchain));
+        } catch(err_arg, err_code) {
+            ;; send back jettons
+            ;; abs() needed, if not 1 means its a VM error
+            reserves::max_balance(storage_fee::pool);
+            msgs::send_simple(
+                0, 
+                ctx.at(SENDER), 
+                router::pay_to(
+                    from_user,
+                    refund_address, 
+                    excesses_address,
+                    abs(err_code != 1 ? err_code : err_arg.to_int()), 
+                    0,  
+                    null(), ;; cant send anything here , use std transfer
+                    amount0, 
+                    storage::token0_address, 
+                    amount1, 
+                    storage::token1_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+            
+            return ();
+        }
+
+        try {
+            throw_arg_unless(op::provide_refund_tx_expired, 1, tx_deadline > now());
+
+            var lp_account = contracts::from_sources(
+                lp_account_idata(my_address(), from_user),
+                storage::lp_account_code
+            );
+
+            reserves::max_balance(storage_fee::pool);
+            msgs::send_with_stateinit(
+                0, 
+                lp_account~address(params::workchain), 
+                lp_account~state_init(), 
+                lp_account::add_liquidity(
+                    amount0, 
+                    amount1, 
+                    min_lp_out,
+                    fwd_amount,
+                    both_positive?,
+                    to_user,
+                    custom_payload_cs,
+                    refund_address,
+                    excesses_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+        } catch(err_arg, err_code) {
+            ;; send back jettons
+            ;; abs() needed, if not 1 means its a VM error
+            reserves::max_balance(storage_fee::pool);
+            msgs::send_simple(
+                0, 
+                ctx.at(SENDER), 
+                router::pay_to(
+                    from_user,
+                    refund_address, 
+                    excesses_address,
+                    abs(err_code != 1 ? err_code : err_arg.to_int()), 
+                    0,  
+                    null(), ;; cant send anything here , use simple transfer
+                    amount0, 
+                    storage::token0_address, 
+                    amount1, 
+                    storage::token1_address
+                ), 
+                CARRY_ALL_BALANCE
+            );
+        }
+        return ();
+    }
+
+    if ctx.at(OPCODE) == op::reset_gas {
+        reserves::exact(storage_fee::pool);
+        utils::send_excesses(0, in_msg_body~load_msg_addr(), QCARRY_ALL_BALANCE);
+        return ();
+    }
+
+    if ctx.at(OPCODE) == op::internal_update_status {
+        storage::is_locked = storage::is_locked ? false : true; 
+        storage::save();
+        reserves::max_balance(storage_fee::pool);
+        utils::send_excesses(0, in_msg_body~load_msg_addr(), QCARRY_ALL_BALANCE);
+        return ();
+    }
+    
+    if ctx.at(OPCODE) == op::internal_update_pool_code {
+        cell new_code = in_msg_body~load_ref();
+        set_code(new_code);
+        return ();
+    }
+
+    if ctx.at(OPCODE) == op::internal_set_fees { 
+        int new_lp_fee = in_msg_body~load_uint16();
+        int new_protocol_fee = in_msg_body~load_uint16();
+        slice new_protocol_fee_address = in_msg_body~load_msg_addr();
+
+        storage::lp_fee = new_lp_fee;
+        storage::protocol_fee = new_protocol_fee;
+        storage::protocol_fee_address = new_protocol_fee_address;
+
+        storage::save();
+        
+        reserves::max_balance(storage_fee::pool);
+        utils::send_excesses(0, in_msg_body~load_msg_addr(), QCARRY_ALL_BALANCE);
+        return ();
+    }
+
+    <%
+    if (renderPoolExtRouterCalls) {
+        print(`if handle_ext_router_messages() { return (); }`);
+    }
+    %>
+
+
+    throw(error::wrong_op);
+}
