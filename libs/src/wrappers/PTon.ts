@@ -225,12 +225,20 @@ export class PTonMinterV2 extends PTonMinterAbc<typeof pTonMinterOpCodesV2> {
         ownerAddress: Address,
         excessesAddress?: Address
     }, value?: bigint) {
+        const excessesAddress = opts.excessesAddress ?? via.address;
+        if (!excessesAddress) {
+            throw new Error(
+                "excessesAddress is required when the Sender does not provide an address " +
+                "(e.g. lite-client based senders); otherwise the field is silently encoded as addr_none " +
+                "and the minter rejects the message with exit code 9"
+            );
+        }
         await provider.internal(via, {
             value: value ?? toNano("1"),
             sendMode: SendMode.PAY_GAS_SEPARATELY,
             body: beginMessage(this.opCodes.deployWallet)
                 .storeAddress(opts.ownerAddress)
-                .storeAddress(opts.excessesAddress || via.address)
+                .storeAddress(excessesAddress)
                 .endCell()
         });
     }
